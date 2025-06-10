@@ -66,7 +66,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                       onDeleteSession(session.id);
                     }
                   }}
-                  className="ml-2 p-1 text-gray-500 hover:text-red-400 opacity-50 hover:opacity-100"
+                  className="ml-2 p-1 text-red-600 te hover:text-red-400 opacity-50 hover:opacity-100"
                   aria-label="Delete chat"
                 >
                   <Trash2 size={16} />
@@ -86,7 +86,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               }}
               className="w-full flex items-center justify-center px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-md shadow-md transition-colors text-sm"
             >
-              <Trash2 size={18} className="mr-2" />
+              <Trash2 size={18} className="mr-2 "  />
               Delete All History
             </button>
           </div>

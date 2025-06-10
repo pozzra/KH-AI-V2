@@ -81,7 +81,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <button onClick={toggleSidebar} className="mr-4 text-gray-400 hover:text-white md:hidden">
           <Menu size={24} />
         </button>
-        <h2 className="text-xl font-semibold text-gray-100">KH AI</h2>
+        <h2 className="text-xl font-semibold text-gray-100">KH-AI V2</h2>
       </header>
       <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
         {messages.map((msg) => (
