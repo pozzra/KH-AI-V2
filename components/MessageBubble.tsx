@@ -295,7 +295,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                             .map((paragraph, i) => (
                               <React.Fragment key={i}>
                                 {paragraph}
-                                {i < part.text.split("\n").length - 1 && <br />}
+                                {i < part.text.split("\n").length - 0 && <br />}
                               </React.Fragment>
                             ));
                           const ptClass =

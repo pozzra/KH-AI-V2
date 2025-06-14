@@ -120,23 +120,53 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <h2 className="text-xl font-semibold text-gray-100">KH-AI V2</h2>
       </header>
       <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            // Edit props
-            editingState={editingState}
-            onStartEdit={onStartEdit}
-            onEditInputChange={onEditInputChange}
-            onSaveEdit={onSaveEdit}
-            onCancelEdit={onCancelEdit}
-            // TTS & Copy props
-            speakingMessageId={speakingMessageId}
-            onSpeakMessage={onSpeakMessage}
-            onStopSpeaking={onStopSpeaking}
-            isLoading={isLoading}
-          />
-        ))}
+        {messages.map((msg, idx) => {
+          // Find the index of the last completed bot message (has content)
+          const lastCompletedBotIdx = [...messages]
+            .reverse()
+            .findIndex(
+              (m) =>
+                m.role === "model" &&
+                m.parts &&
+                m.parts.length > 0 &&
+                m.parts.some(
+                  (p) => (p as any).text && (p as any).text.trim() !== ""
+                )
+            );
+          const lastCompletedBotMessageIndex =
+            lastCompletedBotIdx === -1
+              ? -1
+              : messages.length - 1 - lastCompletedBotIdx;
+
+          // Show loading for all bot messages after the last completed one, including the current loading one
+          const showLoading =
+            msg.role === "model" &&
+            // If isLoading, show spinner for all bot messages after last completed
+            ((isLoading && idx > lastCompletedBotMessageIndex) ||
+              // Or, if this bot message has no content yet (pending)
+              msg.parts.length === 0 ||
+              msg.parts.every(
+                (p) => !(p as any).text || (p as any).text.trim() === ""
+              ));
+
+          return (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              // Edit props
+              editingState={editingState}
+              onStartEdit={onStartEdit}
+              onEditInputChange={onEditInputChange}
+              onSaveEdit={onSaveEdit}
+              onCancelEdit={onCancelEdit}
+              // TTS & Copy props
+              speakingMessageId={speakingMessageId}
+              onSpeakMessage={onSpeakMessage}
+              onStopSpeaking={onStopSpeaking}
+              isLoading={showLoading}
+            />
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
       {inputImages.length > 0 && !editingState && (
@@ -176,7 +206,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               accept="image/*,application/pdf" // Allow PDF files
               onChange={onImageUpload}
               className="hidden"
-              disabled={isLoading}
             />
             <textarea
               rows={1}
@@ -185,7 +214,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               onKeyPress={handleKeyPress}
               placeholder="Type your message or ask a question..."
               className="flex-1 p-2 bg-transparent text-gray-100 placeholder-gray-500 focus:outline-none resize-none max-h-32 custom-scrollbar"
-              disabled={isLoading}
             />
             <button
               onClick={toggleRecordingHandler}
