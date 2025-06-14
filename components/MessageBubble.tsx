@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { ChatMessage, Part, TextPart, InlineDataPart } from "../types";
 import {
   User,
@@ -68,6 +68,34 @@ const parseTextForCodeBlocks = (text: string): ParsedSegment[] => {
   return segments;
 };
 
+// Add this utility function at the top or import it from a utils file
+function speakTextWithToggle(
+  text: string,
+  lang: string = "km-KH",
+  isSpeaking: boolean,
+  onStop: () => void
+) {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    alert("Text-to-speech is not supported in this browser.");
+    return;
+  }
+  if (isSpeaking) {
+    window.speechSynthesis.cancel();
+    onStop();
+    return;
+  }
+  const utterance = new window.SpeechSynthesisUtterance(text);
+  utterance.lang = lang;
+  // Try to select a Khmer voice if available
+  const voices: SpeechSynthesisVoice[] = window.speechSynthesis.getVoices();
+  const khmerVoice = voices.find((v) => v.lang === lang);
+  if (khmerVoice) utterance.voice = khmerVoice;
+  utterance.onend = onStop;
+  utterance.onerror = onStop;
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+
 const MessageBubble: React.FC<MessageBubbleProps> = ({
   message,
   editingState,
@@ -83,6 +111,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   const isUser = message.role === "user";
   const isBeingEdited = editingState?.messageId === message.id;
   const [isCopied, setIsCopied] = useState(false);
+  const [isAllCopied, setIsAllCopied] = useState(false);
 
   const handleCopy = () => {
     const textToCopy = message.parts
@@ -148,14 +177,40 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
     }, [] as Array<ParsedSegment | ({ type: "image" } & InlineDataPart)>);
   }, [message.parts, isUser]);
 
-  // Example usage in your speaker button handler:
-  const handleSpeak = () => {
-    // Combine all text parts for this message
-    const text = message.parts
-      .filter((part) => (part as any).text !== undefined)
-      .map((part) => (part as any).text)
+  // Helper to get all text for TTS and copy
+  const getAllText = () =>
+    message.parts
+      .filter(isTextPart)
+      .map((part) => part.text)
       .join("\n");
-    speakText(text, "km-KH");
+
+  // Handler for copy all bot result
+  const handleCopyAll = () => {
+    const textToCopy = message.parts
+      .filter(isTextPart)
+      .map((part) => part.text)
+      .join("\n");
+    if (navigator.clipboard && textToCopy) {
+      navigator.clipboard
+        .writeText(textToCopy)
+        .then(() => {
+          setIsAllCopied(true);
+          setTimeout(() => setIsAllCopied(false), 1500);
+        })
+        .catch(() => setIsAllCopied(false));
+    }
+  };
+
+  // Handler for speaker button
+  const handleSpeak = () => {
+    const isSpeaking = speakingMessageId === message.id;
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      onStopSpeaking();
+    } else {
+      onSpeakMessage(message);
+      speakTextWithToggle(getAllText(), "km-KH", false, onStopSpeaking);
+    }
   };
 
   return (
@@ -306,7 +361,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                             .map((paragraph, i) => (
                               <React.Fragment key={i}>
                                 {paragraph}
-                                {i < segment.content.split("\n").length - 1 && <br />}
+                                {i < segment.content.split("\n").length - 1 && (
+                                  <br />
+                                )}
                               </React.Fragment>
                             ));
                           return (
@@ -329,7 +386,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                           );
                         }
                         if (segment.type === "image") {
-                          const imgPart = segment as { type: "image" } & InlineDataPart;
+                          const imgPart = segment as {
+                            type: "image";
+                          } & InlineDataPart;
                           return (
                             <img
                               key={`model-img-${index}`}
@@ -404,18 +463,19 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                         : "hover:text-green-300 text-gray-300"
                     } p-1`}
                   />
+                  {/* Copy all bot result button */}
                   <IconButton
                     icon={
-                      isCopied ? <Check size={14} /> : <CopyIcon size={14} />
+                      isAllCopied ? <Check size={14} /> : <CopyIcon size={14} />
                     }
-                    label={isCopied ? "Copied!" : "Copy message"}
-                    onClick={handleCopy}
+                    label={isAllCopied ? "បានចម្លង!" : "ចម្លងចម្លើយទាំងអស់"}
+                    onClick={handleCopyAll}
                     className={`${
-                      isCopied
+                      isAllCopied
                         ? "text-green-300"
                         : "hover:text-purple-300 text-gray-300"
                     } p-1`}
-                    disabled={isCopied}
+                    disabled={isAllCopied}
                   />
                 </>
               )}

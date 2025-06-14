@@ -1,10 +1,18 @@
-import React, { useRef, useEffect } from 'react';
-import { ChatMessage, TextPart, InlineDataPart } from '../types';
-import MessageBubble from './MessageBubble';
-import ImagePreview from './ImagePreview';
+import React, { useRef, useEffect } from "react";
+import { ChatMessage, TextPart, InlineDataPart } from "../types";
+import MessageBubble from "./MessageBubble";
+import ImagePreview from "./ImagePreview";
 import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
 
-import { Send, Paperclip, Mic, Loader2, ImageOff, Menu, FileText } from 'lucide-react'; // Add this import for PDF icon
+import {
+  Send,
+  Paperclip,
+  Mic,
+  Loader2,
+  ImageOff,
+  Menu,
+  FileText,
+} from "lucide-react"; // Add this import for PDF icon
 
 interface ChatInterfaceProps {
   messages: ChatMessage[];
@@ -58,7 +66,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { isSupported: micSupported, isRecording: isMicRecording, start, stop } = useSpeechRecognition(
+  const {
+    isSupported: micSupported,
+    isRecording: isMicRecording,
+    start,
+    stop,
+  } = useSpeechRecognition(
     (transcript) => {
       setInputText(inputText + (inputText ? " " : "") + transcript);
     },
@@ -66,18 +79,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   );
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(scrollToBottom, [messages]);
 
   const handleSend = () => {
-    if (isLoading || (!inputText.trim() && inputImages.length === 0) || editingState) return;
+    if (
+      isLoading ||
+      (!inputText.trim() && inputImages.length === 0) ||
+      editingState
+    )
+      return;
     onSendMessage();
   };
 
   const handleKeyPress = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey && !editingState) {
+    if (event.key === "Enter" && !event.shiftKey && !editingState) {
       event.preventDefault();
       handleSend();
     }
@@ -89,9 +107,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-screen max-h-screen bg-gray-800"> {/* <-- changed h-full to h-screen and added max-h-screen */}
+    <div className="flex flex-col h-screen max-h-screen bg-gray-800">
+      {" "}
+      {/* <-- changed h-full to h-screen and added max-h-screen */}
       <header className="p-4 bg-gray-900 shadow-md flex items-center">
-        <button onClick={toggleSidebar} className="mr-4 text-gray-400 hover:text-white md:hidden">
+        <button
+          onClick={toggleSidebar}
+          className="mr-4 text-gray-400 hover:text-white md:hidden"
+        >
           <Menu size={24} />
         </button>
         <h2 className="text-xl font-semibold text-gray-100">KH-AI V2</h2>
@@ -116,14 +139,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         ))}
         <div ref={messagesEndRef} />
       </div>
-
       {inputImages.length > 0 && !editingState && (
         <div className="p-2 border-t border-gray-700 bg-gray-800">
           <div className="flex space-x-2 overflow-x-auto pb-2">
             {inputImages.map((img, index) => (
               <ImagePreview
                 key={index}
-                src={img.mimeType === "application/pdf" ? undefined : `data:${img.mimeType};base64,${img.data}`}
+                src={
+                  img.mimeType === "application/pdf"
+                    ? undefined
+                    : `data:${img.mimeType};base64,${img.data}`
+                }
                 alt={img.name}
                 onRemove={() => removeInputImage(index)}
                 mimeType={img.mimeType}
@@ -132,7 +158,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
           </div>
         </div>
       )}
-
       {!editingState && (
         <div className="p-4 border-t border-gray-700 bg-gray-800">
           <div className="flex items-end space-x-2 bg-gray-700 rounded-lg p-2">
@@ -165,21 +190,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <button
               onClick={toggleRecordingHandler}
               disabled={!micSupported}
-              className={`p-2 ${isMicRecording ? "text-red-500" : "text-gray-400"} transition-colors`}
+              className={`p-2 ${
+                isMicRecording ? "text-red-500" : "text-gray-400"
+              } transition-colors`}
               aria-label={isMicRecording ? "Stop recording" : "Start recording"}
             >
               <Mic size={22} />
             </button>
             {!micSupported && (
-              <span className="text-xs text-red-400 ml-2">Microphone not supported in this browser.</span>
+              <span className="text-xs text-red-400 ml-2">
+                Microphone not supported in this browser.
+              </span>
             )}
             <button
               onClick={handleSend}
-              disabled={isLoading || (!inputText.trim() && inputImages.length === 0)}
+              disabled={
+                isLoading || (!inputText.trim() && inputImages.length === 0)
+              }
               className="p-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-500 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
               aria-label="Send message"
             >
-              {isLoading ? <Loader2 className="animate-spin" size={22} /> : <Send size={22} />}
+              {isLoading ? (
+                <Loader2 className="animate-spin" size={22} />
+              ) : (
+                <Send size={22} />
+              )}
             </button>
           </div>
         </div>
