@@ -28,7 +28,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* Overlay for mobile */}
       {isOpen && <div onClick={toggleSidebar} className="fixed inset-0 bg-black/50 z-30 md:hidden"></div>}
 
-      <div className={`fixed md:static md:inset-0 inset-y-0 left-0 z-40 w-64 bg-gray-900 text-gray-200 flex flex-col transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 min-h-screen`}>
+      <div className={`fixed md:dynamic  md:inset-0 inset-y-0 left-0 z-40 w-64 bg-gray-900 text-gray-200 flex flex-col transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 min-h-screen`}>
         <div className="p-4 border-b border-gray-700 flex justify-between items-center">
           <h1 className="text-xl font-semibold">Chat History</h1>
           <button onClick={toggleSidebar} className="md:hidden text-gray-400 hover:text-white">
