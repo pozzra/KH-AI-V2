@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, JSX } from 'react';
 import { Play, Eye, EyeOff, AlertTriangle, Copy } from 'lucide-react';
 import IconButton from './IconButton';
@@ -117,22 +116,19 @@ const CodeEmulator = ({ language, code }: CodeEmulatorProps): JSX.Element => {
           {language} {isSupported ? 'Emulator' : 'Snippet'}
         </span>
         <div className="flex items-center space-x-1">
-          {isSupported && (
-            <IconButton
-              icon={<Play size={16} />}
-              label="Run Code"
-              onClick={handleRunCode}
-              className="text-green-400 hover:text-green-300 p-1 bg-gray-700 hover:bg-gray-600"
-              disabled={!isSupported}
-            />
-          )}
+          <IconButton
+            icon={<Play size={16} />}
+            label="Run Code"
+            onClick={handleRunCode}
+            className="text-green-400 hover:text-green-300 p-1 bg-gray-700 hover:bg-gray-600"
+            disabled={!isSupported}
+          />
           <IconButton
             icon={<Copy size={16} />}
             label="Copy Code"
             onClick={() => navigator.clipboard.writeText(code)}
             className="text-gray-400 hover:text-gray-300 p-1 bg-gray-700 hover:bg-gray-600"
           />
-          
           <IconButton
             icon={showCode ? <EyeOff size={16} /> : <Eye size={16} />}
             label={showCode ? 'Hide Code' : 'View Code'}

@@ -113,12 +113,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
   const isModelPlaceholderLoading =
     !isUser &&
     isLoading &&
-    (
-      message.parts.length === 0 ||
+    (message.parts.length === 0 ||
       (message.parts.length === 1 &&
         isTextPart(message.parts[0]) &&
-        message.parts[0].text.trim() === "")
-    );
+        message.parts[0].text.trim() === ""));
 
   const canSaveEdit =
     editingState?.currentText.trim() !== "" || imageParts.length > 0;
@@ -195,7 +193,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                     value={editingState.currentText}
                     onChange={(e) => onEditInputChange(e.target.value)}
                     className="w-full p-2 bg-gray-800 text-white rounded-md focus:ring-1 focus:ring-blue-400 resize-none custom-scrollbar"
-                    rows={Math.max(3, editingState.currentText.split("\n").length)}
+                    rows={Math.max(
+                      3,
+                      editingState.currentText.split("\n").length
+                    )}
                     autoFocus
                   />
                   {imageParts.map((part, index) => (
@@ -298,54 +299,37 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                           </p>
                         );
                       })
-                    : message.parts.map((part, index) => {
-                        if (isTextPart(part)) {
-                          const paragraphs = part.text
+                    : parsedContent?.map((segment, index) => {
+                        if (segment.type === "text") {
+                          const paragraphs = segment.content
                             .split("\n")
                             .map((paragraph, i) => (
                               <React.Fragment key={i}>
                                 {paragraph}
-                                {i < part.text.split("\n").length - 1 && <br />}
+                                {i < segment.content.split("\n").length - 1 && <br />}
                               </React.Fragment>
                             ));
-                          const ptClass =
-                            index === 0 &&
-                            textContentForActions &&
-                            textContentForActions.trim() !== ""
-                              ? "pt-6"
-                              : "";
                           return (
                             <p
                               key={`model-text-${index}`}
-                              className={`whitespace-pre-wrap break-words ${ptClass}`}
+                              className="whitespace-pre-wrap break-words"
                             >
                               {paragraphs}
                             </p>
                           );
                         }
-                        // --- PDF PREVIEW FOR BOT (NO REMOVE BUTTON) ---
-                        if (
-                          isInlineDataPart(part) &&
-                          part.inlineData.mimeType === "application/pdf"
-                        ) {
+                        if (segment.type === "code") {
                           return (
-                            <div key={`bot-pdf-${index}`} className="mt-2">
-                              <ImagePreview
-                                alt={
-                                  part.inlineData.name
-                                    ? part.inlineData.name
-                                    : "PDF file"
-                                }
-                                mimeType="application/pdf"
-                                // No onRemove prop, so XCircle is hidden
+                            <div key={`model-code-${index}`} className="my-2">
+                              <CodeEmulator
+                                language={segment.language}
+                                code={segment.code}
                               />
                             </div>
                           );
                         }
-                        if ((part as any).type === "image") {
-                          const imgPart = part as {
-                            type: "image";
-                          } & InlineDataPart;
+                        if (segment.type === "image") {
+                          const imgPart = segment as { type: "image" } & InlineDataPart;
                           return (
                             <img
                               key={`model-img-${index}`}
@@ -384,7 +368,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                     className="hover:text-blue-300 text-gray-300 p-1"
                   />
                   <IconButton
-                    icon={isCopied ? <Check size={14} /> : <CopyIcon size={14} />}
+                    icon={
+                      isCopied ? <Check size={14} /> : <CopyIcon size={14} />
+                    }
                     label={isCopied ? "Copied!" : "Copy message"}
                     onClick={handleCopy}
                     className={`${
@@ -419,7 +405,9 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
                     } p-1`}
                   />
                   <IconButton
-                    icon={isCopied ? <Check size={14} /> : <CopyIcon size={14} />}
+                    icon={
+                      isCopied ? <Check size={14} /> : <CopyIcon size={14} />
+                    }
                     label={isCopied ? "Copied!" : "Copy message"}
                     onClick={handleCopy}
                     className={`${

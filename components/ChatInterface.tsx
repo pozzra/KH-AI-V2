@@ -89,14 +89,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-800">
+    <div className="flex flex-col h-screen max-h-screen bg-gray-800"> {/* <-- changed h-full to h-screen and added max-h-screen */}
       <header className="p-4 bg-gray-900 shadow-md flex items-center">
         <button onClick={toggleSidebar} className="mr-4 text-gray-400 hover:text-white md:hidden">
           <Menu size={24} />
         </button>
         <h2 className="text-xl font-semibold text-gray-100">KH-AI V2</h2>
       </header>
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 custom-scrollbar">
         {messages.map((msg) => (
           <MessageBubble
             key={msg.id}
