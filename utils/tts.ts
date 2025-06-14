@@ -19,15 +19,10 @@ export function speakText(text: string, lang: string = "km-KH") {
   } else {
     setVoiceAndSpeak();
   }
-
-  function setVoiceAndSpeak() {
-    const khmerVoice = voices.find(v => v.lang === lang);
-    if (khmerVoice) {
-      utterance.voice = khmerVoice;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    } else {
-      alert("សូមអភ័យទោស! កម្មវិធីមិនគាំទ្រអានភាសាខ្មែរនៅលើ browser នេះទេ។\nSorry, Khmer speech synthesis is not supported in this browser.");
+    function setVoiceAndSpeak() {
+        // Find a Khmer voice if available
+        const khmerVoice = voices.find(voice => voice.lang.startsWith("km"));
+        utterance.voice = khmerVoice || voices[0]; // Fallback to first available voice
+        window.speechSynthesis.speak(utterance);
     }
-  }
 }
