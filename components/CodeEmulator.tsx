@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, JSX } from 'react';
-import { Play, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { Play, Eye, EyeOff, AlertTriangle, Copy } from 'lucide-react';
 import IconButton from './IconButton';
 
 interface CodeEmulatorProps {
@@ -126,6 +126,13 @@ const CodeEmulator = ({ language, code }: CodeEmulatorProps): JSX.Element => {
               disabled={!isSupported}
             />
           )}
+          <IconButton
+            icon={<Copy size={16} />}
+            label="Copy Code"
+            onClick={() => navigator.clipboard.writeText(code)}
+            className="text-gray-400 hover:text-gray-300 p-1 bg-gray-700 hover:bg-gray-600"
+          />
+          
           <IconButton
             icon={showCode ? <EyeOff size={16} /> : <Eye size={16} />}
             label={showCode ? 'Hide Code' : 'View Code'}

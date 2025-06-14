@@ -1,4 +1,4 @@
-
+// Description: Main application component for the AI chat interface, handling chat sessions, messages, and speech recognition.
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ChatSession, ChatMessage, Part, TextPart, InlineDataPart, SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from './types';
 import Sidebar from './components/Sidebar';
@@ -62,10 +62,9 @@ const App: React.FC = () => {
 
     // Try to get API key from Vite's import.meta.env
     console.log("Attempting to load API key...");
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      console.log("import.meta.env is available.");
-      const viteSpecificApiKey = import.meta.env.VITE_API_KEY;
-      // Check if VITE_API_KEY is defined (it could be an empty string, which is a valid defined state)
+    if (typeof import.meta !== 'undefined' && typeof import.meta.env !== 'undefined') {
+ console.log("import.meta.env is available. Checking for VITE_API_KEY...");
+      const viteSpecificApiKey = (import.meta.env as any).VITE_API_KEY;
       if (typeof viteSpecificApiKey === 'string') {
         console.log("Found VITE_API_KEY in import.meta.env:", viteSpecificApiKey ? "Exists" : "Empty String");
         apiKey = viteSpecificApiKey;
@@ -73,8 +72,8 @@ const App: React.FC = () => {
         console.log("VITE_API_KEY not found or not a string in import.meta.env. Checking for generic API_KEY in import.meta.env...");
         // Fallback to API_KEY from import.meta.env only if VITE_API_KEY is not defined.
         // Note: Accessing non-VITE_ prefixed vars from import.meta.env is non-standard for Vite
-        // for user-defined .env variables unless envPrefix is customized.
-        const genericMetaApiKey = import.meta.env.API_KEY;
+        // for user-defined .env variables unless envPrefix is customized. Use type assertion.
+        const genericMetaApiKey = (import.meta.env as any).API_KEY;
         if (typeof genericMetaApiKey === 'string') {
           console.log("Found generic API_KEY in import.meta.env:", genericMetaApiKey ? "Exists" : "Empty String");
           apiKey = genericMetaApiKey;
@@ -200,18 +199,18 @@ const App: React.FC = () => {
   // Corrected effect to save chatHistory to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
-        if (chatHistory.length > 0) {
-          try {
-            localStorage.setItem(LOCAL_STORAGE_KEYS.CHAT_HISTORY, JSON.stringify(chatHistory));
-          } catch (error) {
-            console.error("Failed to save chat history to localStorage:", error);
-          }
-        } else { // If chatHistory becomes empty, clear it from localStorage
-          localStorage.removeItem(LOCAL_STORAGE_KEYS.CHAT_HISTORY);
-          localStorage.removeItem(LOCAL_STORAGE_KEYS.ACTIVE_SESSION_ID); // Also clear active session
+      if (chatHistory.length > 0) {
+        try {
+          localStorage.setItem(LOCAL_STORAGE_KEYS.CHAT_HISTORY, JSON.stringify(chatHistory));
+        } catch (error) {
+          console.error("Failed to save chat history to localStorage:", error);
         }
-    }
-  }, [chatHistory]); // Depends only on chatHistory
+      } else { // If chatHistory becomes empty, clear it from localStorage
+        localStorage.removeItem(LOCAL_STORAGE_KEYS.CHAT_HISTORY);
+        localStorage.removeItem(LOCAL_STORAGE_KEYS.ACTIVE_SESSION_ID); // Also clear active session
+      }
+  }
+}, [chatHistory]); // Depends only on chatHistory
 
   // Corrected effect to save activeSessionId to localStorage
   useEffect(() => {
@@ -245,11 +244,29 @@ const App: React.FC = () => {
   const updateChatSession = useCallback((sessionId: string, newMessages: ChatMessage[], newTitle?: string) => {
     setChatHistory(prevHistory => {
       const now = Date.now();
-      return prevHistory.map(session =>
-        session.id === sessionId
-          ? { ...session, messages: newMessages, title: newTitle || session.title, timestamp: now }
-          : session
-      ).sort((a, b) => b.timestamp - a.timestamp); 
+      let updated = false;
+      const newHistory = prevHistory.map(session => {
+        if (session.id === sessionId) {
+          updated = true;
+          return {
+            ...session,
+            messages: [...newMessages], // always new array
+            title: newTitle || session.title,
+            timestamp: now,
+          };
+        }
+        return session;
+      });
+      // If session not found (shouldn't happen), add it
+      if (!updated) {
+        newHistory.push({
+          id: sessionId,
+          messages: [...newMessages],
+          title: newTitle || "New Chat",
+          timestamp: now,
+        });
+      }
+      return newHistory.sort((a, b) => b.timestamp - a.timestamp);
     });
   }, []);
 
@@ -263,6 +280,7 @@ const App: React.FC = () => {
       const errorMsgContent = apiKeyError || "AI Service is not available. Please check API key configuration.";
       const errorUiMessage: ChatMessage = {
         id: uuidv4(), role: 'model', parts: [{ text: errorMsgContent }], timestamp: Date.now(),
+        files: false
       };
       const finalMessages = [...messagesLeadingToThisTurn, errorUiMessage];
       setCurrentMessages(finalMessages);
@@ -280,6 +298,7 @@ const App: React.FC = () => {
       const modelMessageId = uuidv4();
       const modelMessageBase: Omit<ChatMessage, 'parts' | 'timestamp'> = {
         id: modelMessageId, role: 'model',
+        files: false
       };
       
       const placeholderUiMessage: ChatMessage = { ...modelMessageBase, parts: [{ text: '' }], timestamp: Date.now() };
@@ -300,12 +319,32 @@ const App: React.FC = () => {
 
     } catch (error) {
       console.error("Error sending message to Gemini:", error);
-      const errorText = error instanceof Error ? error.message : "An unknown error occurred.";
+      let errorText = "An unknown error occurred.";
+      if (error instanceof Error) {
+        errorText = error.message;
+        // Check for Gemini API overload
+        if (
+          errorText.includes("503") ||
+          errorText.includes("overloaded") ||
+          errorText.includes("UNAVAILABLE")
+        ) {
+          errorText =
+            "The AI model is currently overloaded. Please try again in a few moments.";
+        }
+      }
       const errorUiMessage: ChatMessage = {
-        id: uuidv4(), role: 'model', parts: [{ text: `Error: ${errorText}` }], timestamp: Date.now(),
+        id: uuidv4(),
+        role: "model",
+        parts: [{ text: `Error: ${errorText}` }],
+        timestamp: Date.now(),
+        files: false
       };
       setCurrentMessages([...messagesLeadingToThisTurn, errorUiMessage]);
-      updateChatSession(sessionId, [...messagesLeadingToThisTurn, errorUiMessage], titleToUpdate);
+      updateChatSession(
+        sessionId,
+        [...messagesLeadingToThisTurn, errorUiMessage],
+        titleToUpdate
+      );
     } finally {
       setIsLoading(false);
     }
@@ -330,11 +369,15 @@ const App: React.FC = () => {
       userParts.push({ text: inputText.trim() });
     }
     inputImages.forEach(img => {
-      userParts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+      userParts.push({ inlineData: {
+        mimeType: img.mimeType, data: img.data,
+        name: ''
+      } });
     });
 
     const userMessage: ChatMessage = {
       id: uuidv4(), role: 'user', parts: userParts, timestamp: Date.now(),
+      files: false
     };
     
     const messagesIncludingUser = [...currentMessages, userMessage];

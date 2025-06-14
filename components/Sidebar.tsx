@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { ChatSession } from '../types';
 import { PlusCircle, Trash2, MessageSquare, X, Menu } from 'lucide-react';
@@ -64,6 +63,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                     e.stopPropagation(); // Prevent selecting session
                     if (window.confirm(`Are you sure you want to delete "${session.title || 'this chat'}"?`)) {
                       onDeleteSession(session.id);
+                      // If this was the last session, auto-create a new chat
+                      if (history.length === 1) {
+                        setTimeout(() => {
+                          onNewChat();
+                        }, 0);
+                      }
                     }
                   }}
                   className="ml-2 p-1 text-red-600 te hover:text-red-400 opacity-50 hover:opacity-100"
@@ -80,9 +85,13 @@ const Sidebar: React.FC<SidebarProps> = ({
           <div className="p-4 border-t border-gray-700">
             <button
               onClick={() => {
-                 if (window.confirm("Are you sure you want to delete all chat history? This action cannot be undone.")) {
-                    onDeleteAllHistory();
-                 }
+                if (window.confirm("Are you sure you want to delete all chat history? This action cannot be undone.")) {
+                  onDeleteAllHistory();
+                  // Automatically start a new chat after deleting all history
+                  setTimeout(() => {
+                    onNewChat();
+                  }, 0);
+                }
               }}
               className="w-full flex items-center justify-center px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-md shadow-md transition-colors text-sm"
             >

@@ -5,6 +5,7 @@ export interface TextPart {
 
 export interface InlineDataPart {
   inlineData: {
+    name: string;
     mimeType: string;
     data: string; // base64 encoded
   };
@@ -13,6 +14,7 @@ export interface InlineDataPart {
 export type Part = TextPart | InlineDataPart;
 
 export interface ChatMessage {
+  files: boolean;
   id: string;
   role: 'user' | 'model';
   parts: Part[];

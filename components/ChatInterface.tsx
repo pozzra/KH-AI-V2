@@ -2,7 +2,9 @@ import React, { useRef, useEffect } from 'react';
 import { ChatMessage, TextPart, InlineDataPart } from '../types';
 import MessageBubble from './MessageBubble';
 import ImagePreview from './ImagePreview';
-import { Send, Paperclip, Mic, Loader2, ImageOff, Menu } from 'lucide-react';
+import { useSpeechRecognition } from "../hooks/useSpeechRecognition";
+
+import { Send, Paperclip, Mic, Loader2, ImageOff, Menu, FileText } from 'lucide-react'; // Add this import for PDF icon
 
 interface ChatInterfaceProps {
   messages: ChatMessage[];
@@ -56,6 +58,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const { isSupported: micSupported, isRecording: isMicRecording, start, stop } = useSpeechRecognition(
+    (transcript) => {
+      setInputText(inputText + (inputText ? " " : "") + transcript);
+    },
+    "km-KH" // Khmer language code
+  );
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -72,6 +81,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       event.preventDefault();
       handleSend();
     }
+  };
+
+  const toggleRecordingHandler = () => {
+    if (isMicRecording) stop();
+    else start();
   };
 
   return (
@@ -109,9 +123,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             {inputImages.map((img, index) => (
               <ImagePreview
                 key={index}
-                src={`data:${img.mimeType};base64,${img.data}`}
+                src={img.mimeType === "application/pdf" ? undefined : `data:${img.mimeType};base64,${img.data}`}
                 alt={img.name}
                 onRemove={() => removeInputImage(index)}
+                mimeType={img.mimeType}
               />
             ))}
           </div>
@@ -124,7 +139,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <button
               onClick={() => fileInputRef.current?.click()}
               className="p-2 text-gray-400 hover:text-indigo-400 transition-colors"
-              aria-label="Upload image"
+              aria-label="Upload file"
               disabled={isLoading}
             >
               <Paperclip size={22} />
@@ -133,7 +148,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               type="file"
               ref={fileInputRef}
               multiple
-              accept="image/*"
+              accept="image/*,application/pdf" // Allow PDF files
               onChange={onImageUpload}
               className="hidden"
               disabled={isLoading}
@@ -148,13 +163,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               disabled={isLoading}
             />
             <button
-              onClick={toggleRecording}
-              className={`p-2 transition-colors ${isRecording ? 'text-red-500 animate-pulse' : 'text-gray-400 hover:text-indigo-400'}`}
-              aria-label={isRecording ? "Stop recording" : "Start recording"}
-              disabled={isLoading}
+              onClick={toggleRecordingHandler}
+              disabled={!micSupported}
+              className={`p-2 ${isMicRecording ? "text-red-500" : "text-gray-400"} transition-colors`}
+              aria-label={isMicRecording ? "Stop recording" : "Start recording"}
             >
               <Mic size={22} />
             </button>
+            {!micSupported && (
+              <span className="text-xs text-red-400 ml-2">Microphone not supported in this browser.</span>
+            )}
             <button
               onClick={handleSend}
               disabled={isLoading || (!inputText.trim() && inputImages.length === 0)}
