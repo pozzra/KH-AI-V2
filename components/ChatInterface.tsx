@@ -11,6 +11,7 @@ interface ChatInterfaceProps {
   inputImages: { data: string; mimeType: string; name: string }[];
   removeInputImage: (index: number) => void;
   onSendMessage: () => void;
+  // This prop is called when files are selected via the file input
   onImageUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   isLoading: boolean;
   isRecording: boolean;
@@ -36,7 +37,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   inputImages,
   removeInputImage,
   onSendMessage,
-  onImageUpload,
+  onImageUpload, // The function to call when files are uploaded
   isLoading,
   isRecording,
   toggleRecording,
@@ -54,6 +55,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onStopSpeaking,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Ref for the hidden file input
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
@@ -106,11 +108,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       {inputImages.length > 0 && !editingState && (
         <div className="p-2 border-t border-gray-700 bg-gray-800">
           <div className="flex space-x-2 overflow-x-auto pb-2">
-            {inputImages.map((img,file, index) => (
+            {inputImages.map((img, index) => (
               <ImagePreview
                 key={index}
-                src={`data:${img.mimeType, file.mimeType};base64,${img.data, file.data}`}
-                alt={img.name,file.name}
+                src={`data:${img.mimeType};base64,${img.data}`}
+                alt={img.name}
                 onRemove={() => removeInputImage(index)}
               />
             ))}
@@ -121,21 +123,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       {!editingState && (
         <div className="p-4 border-t border-gray-700 bg-gray-800">
           <div className="flex items-end space-x-2 bg-gray-700 rounded-lg p-2">
+            {/* Button to trigger file input */}
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => fileInputRef.current?.click()} // Triggers the hidden input click
               className="p-2 text-gray-400 hover:text-indigo-400 transition-colors"
               aria-label="Upload image"
               disabled={isLoading}
             >
               <Paperclip size={22} />
             </button>
+            {/* Hidden file input */}
             <input
               type="file"
-              ref={fileInputRef}
-              multiple
-              accept="image/*"
-              onChange={onImageUpload}
-              className="hidden"
+              ref={fileInputRef} // Link ref to input
+              multiple // Allow multiple files
+              accept="image/*" // Restrict to image files
+              onChange={onImageUpload} // Call the prop function when files are selected
+              className="hidden" // Hide the default input
               disabled={isLoading}
             />
             <textarea
