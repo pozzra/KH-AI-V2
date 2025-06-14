@@ -1,18 +1,22 @@
-
 import React, { useRef, useEffect } from 'react';
-import { ChatMessage, TextPart, InlineDataPart } from '../types';
+import { ChatMessage } from '../types'; // Assuming ChatMessage doesn't need direct changes here
 import MessageBubble from './MessageBubble';
-import ImagePreview from './ImagePreview';
-import { Send, Paperclip, Mic, Loader2, ImageOff, Menu } from 'lucide-react';
+// import ImagePreview from './ImagePreview'; // Remove this line
+import AttachmentPreview from './AttachmentPreview'; // Import the new component
+import { Send, Paperclip, Mic, Loader2, Menu } from 'lucide-react'; // Using lucide-react
 
+// Update prop names to be more general
 interface ChatInterfaceProps {
   messages: ChatMessage[];
   inputText: string;
   setInputText: (text: string) => void;
-  inputImages: { data: string; mimeType: string; name: string }[];
-  removeInputImage: (index: number) => void;
+  // Use inputFiles instead of inputImages
+  inputFiles: { data: string; mimeType: string; name: string }[];
+  // Use removeInputFile instead of removeInputImage
+  removeInputFile: (index: number) => void;
   onSendMessage: () => void;
-  onImageUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  // Use onFileUpload instead of onImageUpload
+  onFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   isLoading: boolean;
   isRecording: boolean;
   toggleRecording: () => void;
@@ -34,10 +38,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   messages,
   inputText,
   setInputText,
-  inputImages,
-  removeInputImage,
+  // Use inputFiles
+  inputFiles,
+  // Use removeInputFile
+  removeInputFile,
   onSendMessage,
-  onImageUpload,
+  // Use onFileUpload
+  onFileUpload,
   isLoading,
   isRecording,
   toggleRecording,
@@ -64,7 +71,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(scrollToBottom, [messages]);
 
   const handleSend = () => {
-    if (isLoading || (!inputText.trim() && inputImages.length === 0) || editingState) return;
+    // Check against inputFiles length
+    if (isLoading || (!inputText.trim() && inputFiles.length === 0) || editingState) return;
     onSendMessage();
   };
 
@@ -74,6 +82,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       handleSend();
     }
   };
+
+  // Function to trigger file input click
+  const triggerFileInput = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
 
   return (
     <div className="flex flex-col h-full bg-gray-800">
@@ -98,21 +114,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             speakingMessageId={speakingMessageId}
             onSpeakMessage={onSpeakMessage}
             onStopSpeaking={onStopSpeaking}
-            isLoading={isLoading}
+            isLoading={isLoading} // Pass isLoading if MessageBubble uses it
           />
         ))}
         <div ref={messagesEndRef} />
       </div>
 
-      {inputImages.length > 0 && !editingState && (
+      {/* Check against inputFiles length */}
+      {inputFiles.length > 0 && !editingState && (
         <div className="p-2 border-t border-gray-700 bg-gray-800">
           <div className="flex space-x-2 overflow-x-auto pb-2">
-            {inputImages.map((img, index) => (
-              <ImagePreview
+            {/* Map over inputFiles and use AttachmentPreview */}
+            {inputFiles.map((file, index) => (
+              <AttachmentPreview
                 key={index}
-                src={`data:${img.mimeType};base64,${img.data}`}
-                alt={img.name}
-                onRemove={() => removeInputImage(index)}
+                file={file} // Pass the file object
+                onRemove={() => removeInputFile(index)} // Use removeInputFile
               />
             ))}
           </div>
@@ -123,9 +140,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <div className="p-4 border-t border-gray-700 bg-gray-800">
           <div className="flex items-end space-x-2 bg-gray-700 rounded-lg p-2">
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={triggerFileInput} // Use the new trigger function
               className="p-2 text-gray-400 hover:text-indigo-400 transition-colors"
-              aria-label="Upload image"
+              // Update aria-label
+              aria-label="Upload files (images, PDF)"
               disabled={isLoading}
             >
               <Paperclip size={22} />
@@ -134,8 +152,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               type="file"
               ref={fileInputRef}
               multiple
-              accept="image/*"
-              onChange={onImageUpload}
+              // Update accept attribute to include PDF
+              accept="image/*,application/pdf"
+              onChange={onFileUpload} // Use onFileUpload
               className="hidden"
               disabled={isLoading}
             />
@@ -158,7 +177,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </button>
             <button
               onClick={handleSend}
-              disabled={isLoading || (!inputText.trim() && inputImages.length === 0)}
+              // Check against inputFiles length
+              disabled={isLoading || (!inputText.trim() && inputFiles.length === 0)}
               className="p-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-500 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
               aria-label="Send message"
             >
