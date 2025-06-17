@@ -1,7 +1,8 @@
 {
+  "name": "Copy of Gemini AI Chatbot",
+  "description": "A sleek and responsive chatbot application powered by the Gemini API, featuring real-time streaming responses and a modern user interface.",
   "requestFramePermissions": [
     "microphone"
   ],
-  "name": "KH-AI V2",
-  "description": ""
+  "prompt": ""
 }

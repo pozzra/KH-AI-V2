@@ -1,5 +1,5 @@
 {
-  "name": "kh-ai-v2",
+  "name": "copy-of-gemini-ai-chatbot",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -9,17 +9,21 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "0.15.0",
-    "lucide-react": "0.429.0",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
-    "uuid": "9.0.1"
+    "@google/genai": "^0.14.0",
+    "@tailwindcss/vite": "^4.1.10",
+    "highlight.js": "^11.9.0",
+    "marked": "^13.0.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.10",
     "@types/node": "^22.14.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@types/uuid": "^10.0.0",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.5",
+    "tailwindcss": "^4.1.10",
     "typescript": "~5.7.2",
     "vite": "^6.2.0"
   }

@@ -1,156 +1,172 @@
-import React, { useEffect } from "react";
-import { ChatSession } from "../types";
-import { PlusCircle, Trash2, MessageSquare, X, Menu } from "lucide-react";
+
+import React from 'react';
+import { ChatHistoryItem, Theme } from '../types';
+import { PlusIcon, ChatBubbleIcon, CloseIcon, TrashIcon, ReloadIcon } from './IconComponents'; // Added ReloadIcon
+import ThemeSwitcher from './ThemeSwitcher';
+import LoadingDots from './LoadingDots'; // Import LoadingDots
 
 interface SidebarProps {
-  history: ChatSession[];
-  activeSessionId: string | null;
-  onSelectSession: (sessionId: string) => void;
+  histories: ChatHistoryItem[];
+  activeChatId: string | null;
   onNewChat: () => void;
-  onDeleteSession: (sessionId: string) => void;
-  onDeleteAllHistory: () => void;
-  isOpen: boolean;
-  toggleSidebar: () => void;
-setSidebarOpen: (open: boolean) => void; // <-- Add this prop
+  onSelectChat: (id: string) => void;
+  onDeleteChat: (id: string) => void;
+  onDeleteAllChats: () => void;
+  apiKeyMissing: boolean;
+  isOpenOnMobile: boolean;
+  onCloseMobileSidebar: () => void;
+  currentTheme: Theme;
+  onThemeChange: (theme: Theme) => void;
+  generatingTitleForChatId: string | null;
+  onReloadPage: () => void; // New prop for reloading page
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
-  history,
-  activeSessionId,
-  onSelectSession,
+  histories,
+  activeChatId,
   onNewChat,
-  onDeleteSession,
-  onDeleteAllHistory,
-  isOpen,
-  toggleSidebar,
-  setSidebarOpen,
+  onSelectChat,
+  onDeleteChat,
+  onDeleteAllChats,
+  apiKeyMissing,
+  isOpenOnMobile,
+  onCloseMobileSidebar,
+  currentTheme,
+  onThemeChange,
+  generatingTitleForChatId,
+  onReloadPage, // Destructure new prop
 }) => {
-  // Open sidebar automatically on mount (first load)
-  useEffect(() => {
-    setSidebarOpen(true);
-    // eslint-disable-next-line
-  }, []);
+  const handleSelectChatAndCloseSidebar = (id: string) => {
+    onSelectChat(id);
+    onCloseMobileSidebar(); 
+  };
+
+  const handleNewChatAndCloseSidebar = () => {
+    onNewChat();
+    onCloseMobileSidebar(); 
+  };
+
+  const handleDeleteChat = (e: React.MouseEvent, chatId: string) => {
+    e.stopPropagation(); 
+    if (window.confirm('Are you sure you want to delete this chat? This action cannot be undone.')) {
+      onDeleteChat(chatId);
+    }
+  };
+
+  const handleDeleteAllChats = () => {
+    if (window.confirm('Are you sure you want to delete ALL chat histories? This action cannot be undone.')) {
+      onDeleteAllChats();
+      onCloseMobileSidebar(); 
+    }
+  };
+
+  const handleReloadAndCloseSidebar = () => {
+    onReloadPage();
+    // No need to close sidebar manually as page will reload fully
+  };
 
   return (
     <>
-      {/* Menu button for mobile, always visible at top-left */}
-      <button
-        className=" top-4 left-4 z-50 md:hidden bg-gray-900 text-gray-200 p-2 rounded-full shadow-lg focus:outline-none"
-        style={{ display: isOpen ? "none" : "block" }}
-        
-      >
-        {/* <Menu size={28} /> */}
-      </button>
-
-      {/* Overlay for mobile */}
-      {isOpen && (
-        <div
-          onClick={toggleSidebar}
-          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+      {isOpenOnMobile && (
+        <div 
+          className="fixed inset-0 z-30 bg-black/50 dark:bg-black/70 md:hidden" 
+          onClick={onCloseMobileSidebar}
+          aria-hidden="true"
         ></div>
       )}
 
-      <div
-        className={`fixed  inset-y-0 left-0 z-40 w-64 bg-gray-900 text-gray-200 flex flex-col transition-transform duration-300 ease-in-out ${
-          isOpen ? "translate-x-0" : "-translate-x-full"
-        } md:translate-x-0 min-h-screen`}
+      <div 
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 transition-transform duration-300 ease-in-out md:static md:inset-auto md:z-auto md:w-64 md:translate-x-0 
+                  ${isOpenOnMobile ? 'translate-x-0 w-64 sm:w-72 shadow-xl' : '-translate-x-full w-64 sm:w-72'}`}
+        aria-label="Chat history sidebar"
       >
-        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-          <h1 className="text-xl font-semibold">Chat History</h1>
-          <button
-            onClick={toggleSidebar}
-            className="md:hidden text-gray-400 hover:text-white"
+        <div className="flex items-center justify-between p-4 border-b border-slate-300 dark:border-slate-700">
+          <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-100">Chat History</h2>
+          <button 
+            onClick={onCloseMobileSidebar} 
+            className="md:hidden text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            aria-label="Close sidebar"
           >
-            <X size={24} />
+            <CloseIcon className="w-6 h-6" />
           </button>
         </div>
-
-        <button
-          onClick={() => {
-            onNewChat();
-            if (window.innerWidth < 768) toggleSidebar();
-          }}
-          className="flex items-center w-full text-left px-4 py-3 hover:bg-gray-700 transition-colors border-b border-gray-700"
-        >
-          <PlusCircle size={20} className="mr-3 text-green-400" />
-          New Chat
-        </button>
-
-        <div className="flex-grow overflow-y-auto custom-scrollbar">
-          {history.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-gray-500">No chats yet.</p>
-          ) : (
-            history.map((session) => (
-              <div
-                key={session.id}
-                className={`flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-700 transition-colors ${
-                  activeSessionId === session.id
-                    ? "bg-indigo-700 text-white"
-                    : ""
-                }`}
-                onClick={() => {
-                  onSelectSession(session.id);
-                  if (window.innerWidth < 768) toggleSidebar();
-                }}
-              >
-                <div className="flex items-center overflow-hidden">
-                  <MessageSquare size={18} className="mr-2 flex-shrink-0" />
-                  <span className="truncate text-sm">
-                    {session.title || "Untitled Chat"}
-                  </span>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (
-                      window.confirm(
-                        `Are you sure you want to delete "${
-                          session.title || "this chat"
-                        }"?`
-                      )
-                    ) {
-                      onDeleteSession(session.id);
-                      if (history.length === 1) {
-                        setTimeout(() => {
-                          onNewChat();
-                        }, 0);
-                      }
-                      if (window.innerWidth < 768) toggleSidebar();
-                    }
-                  }}
-                  className="ml-2 p-1 text-red-600 te hover:text-red-400 opacity-50 hover:opacity-100"
-                  aria-label="Delete chat"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))
-          )}
+        <div className="p-4 border-b border-slate-300 dark:border-slate-700">
+          <button
+            onClick={handleNewChatAndCloseSidebar}
+            disabled={apiKeyMissing}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-sky-500 dark:bg-sky-600 text-white rounded-lg hover:bg-sky-600 dark:hover:bg-sky-500 transition-colors focus:outline-none focus:ring-2 focus:ring-sky-400 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed"
+          >
+            <PlusIcon className="w-5 h-5" />
+            New Chat
+          </button>
         </div>
+        <nav className="flex-grow overflow-y-auto p-2 space-y-1">
+          {histories.length === 0 && !apiKeyMissing && (
+            <p className="text-slate-500 dark:text-slate-400 text-sm text-center p-4">No chat history yet.</p>
+          )}
+          {histories.map((history) => (
+            <div key={history.id} className="relative group">
+              <button
+                onClick={() => handleSelectChatAndCloseSidebar(history.id)}
+                disabled={apiKeyMissing}
+                className={`w-full flex items-center gap-3 p-3 pr-10 rounded-md text-left transition-colors focus:outline-none focus:ring-1 focus:ring-sky-500
+                  ${ activeChatId === history.id 
+                    ? 'bg-sky-600 dark:bg-sky-700 text-white' 
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  } ${apiKeyMissing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title={history.title}
+              >
+                <ChatBubbleIcon className="w-5 h-5 flex-shrink-0" />
+                <div className="flex items-center flex-grow min-w-0">
+                  <span className="truncate text-sm">{history.title}</span>
+                  {history.id === generatingTitleForChatId && (
+                    <div className="ml-1.5 flex-shrink-0">
+                      <LoadingDots />
+                    </div>
+                  )}
+                </div>
+                <span className={`text-xs flex-shrink-0 ml-auto mr-1 group-hover:hidden ${activeChatId === history.id ? 'text-sky-100 dark:text-sky-300' : 'text-slate-400 dark:text-slate-500'}`}>
+                  {new Date(history.lastUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </button>
+              <button
+                  onClick={(e) => handleDeleteChat(e, history.id)}
+                  disabled={apiKeyMissing}
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 rounded-md opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity
+                             ${apiKeyMissing ? 'cursor-not-allowed !opacity-25' : ''}`}
+                  aria-label={`Delete chat: ${history.title}`}
+                >
+                  <TrashIcon className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </nav>
+        <div className="p-4 border-t border-slate-300 dark:border-slate-700 space-y-3">
+          <ThemeSwitcher currentTheme={currentTheme} onThemeChange={onThemeChange} />
+          
+          {/* <button
+            onClick={handleReloadAndCloseSidebar}
+            className="group w-full flex items-center justify-center gap-2 px-4 py-2 bg-sky-500 dark:bg-sky-600 text-white rounded-lg hover:bg-sky-600 dark:hover:bg-sky-500 transition-colors focus:outline-none focus:ring-2 focus:ring-sky-400"
+            title="Reload Application"
+          >
+            <ReloadIcon className="w-5 h-5 group-hover:animate-spin" />
+            Reload Page
+          </button> */}
 
-        {history.length > 0 && (
-          <div className="p-4 border-t border-gray-700">
+          {histories.length > 0 && (
             <button
-              onClick={() => {
-                if (
-                  window.confirm(
-                    "Are you sure you want to delete all chat history? This action cannot be undone."
-                  )
-                ) {
-                  onDeleteAllHistory();
-                  setTimeout(() => {
-                    onNewChat();
-                  }, 0);
-                  if (window.innerWidth < 768) toggleSidebar();
-                }
-              }}
-              className="w-full flex items-center justify-center px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-md shadow-md transition-colors text-sm"
+              onClick={handleDeleteAllChats}
+              disabled={apiKeyMissing}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-red-600 dark:bg-red-700 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed"
             >
-              <Trash2 size={18} className="mr-2 " />
-              Delete All History
+              <TrashIcon className="w-5 h-5" />
+              Delete All Chats
             </button>
-          </div>
-        )}
+          )}
+          <p className="text-xs text-slate-500 dark:text-slate-400 text-center">
+            Powered by Kun Amra
+          </p>
+        </div>
       </div>
     </>
   );

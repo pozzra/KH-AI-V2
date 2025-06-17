@@ -1,1026 +1,1308 @@
-// Description: Main application component for the AI chat interface, handling chat sessions, messages, and speech recognition.
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import {
-  ChatSession,
-  ChatMessage,
-  Part,
-  TextPart,
-  InlineDataPart,
-  SpeechRecognition,
-  SpeechRecognitionEvent,
-  SpeechRecognitionErrorEvent,
-} from "./types";
-import Sidebar from "./components/Sidebar";
-import ChatInterface from "./components/ChatInterface";
-import { GeminiService } from "./services/geminiService";
-import { v4 as uuidv4 } from "uuid";
-import {
-  AlertTriangle,
-  Info,
-  Loader2,
-  Edit3,
-  Save,
-  X,
-  Volume2,
-  VolumeX,
-  Copy as CopyIcon,
-  Check,
-  Play,
-  Eye,
-  EyeOff,
-} from "lucide-react";
 
-const LOCAL_STORAGE_KEYS = {
-  CHAT_HISTORY: "chatHistory",
-  ACTIVE_SESSION_ID: "activeChatSessionId",
-  SIDEBAR_OPEN_STATE: "sidebarOpenState",
-};
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { GoogleGenAI, Chat } from '@google/genai';
+import { ChatMessage, Sender, ChatHistoryItem, Theme, FilePart, RecognitionLanguage } from './types';
+import ChatMessageItem from './components/ChatMessageItem';
+import ChatInput, { FilePreview } from './components/ChatInput'; // Import FilePreview
+import Sidebar from './components/Sidebar';
+import { MenuIcon } from './components/IconComponents';
+import { RunCodeModal } from './components/RunCodeModal'; // Import RunCodeModal as named import
+import {
+  loadChatHistories,
+  saveChatHistories,
+  loadActiveChatId,
+  saveActiveChatId,
+  convertToGeminiHistory,
+  generateChatTitle,
+  loadTheme,
+  saveTheme,
+  applyTheme,
+  fileToBase64,
+  MAX_INDIVIDUAL_FILE_SIZE,
+  MAX_TOTAL_FILE_SIZE,
+  MAX_FILES_PER_MESSAGE,
+  ALLOWED_FILE_TYPES
+} from './utils';
 
-const isTextPart = (part: Part): part is TextPart =>
-  (part as TextPart).text !== undefined;
+// Extend Window interface for SpeechRecognition & SpeechSynthesis
+declare global {
+  // Supporting types for SpeechRecognition
+  interface SpeechRecognitionAlternative {
+    readonly transcript: string;
+    readonly confidence: number;
+  }
+
+  interface SpeechRecognitionResult {
+    readonly isFinal: boolean;
+    readonly length: number;
+    item(index: number): SpeechRecognitionAlternative;
+    [index: number]: SpeechRecognitionAlternative;
+  }
+
+  interface SpeechRecognitionResultList {
+    readonly length: number;
+    item(index: number): SpeechRecognitionResult;
+    [index: number]: SpeechRecognitionResult;
+  }
+
+  interface SpeechRecognitionEvent extends Event {
+    readonly results: SpeechRecognitionResultList;
+    readonly resultIndex: number;
+  }
+
+  interface SpeechRecognitionErrorEvent extends Event {
+    readonly error: string;
+    readonly message?: string;
+  }
+
+  interface SpeechRecognition extends EventTarget {
+    grammars: any;
+    lang: string;
+    continuous: boolean;
+    interimResults: boolean;
+    maxAlternatives: number;
+    serviceURI?: string;
+
+    start(): void;
+    stop(): void;
+    abort(): void;
+
+    onaudiostart: ((this: SpeechRecognition, ev: Event) => any) | null;
+    onaudioend: ((this: SpeechRecognition, ev: Event) => any) | null;
+    onend: ((this: SpeechRecognition, ev: Event) => any) | null;
+    onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any) | null;
+    onnomatch: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
+    onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
+    onsoundstart: ((this: SpeechRecognition, ev: Event) => any) | null;
+    onsoundend: ((this: SpeechRecognition, ev: Event) => any) | null;
+    onspeechstart: ((this: SpeechRecognition, ev: Event) => any) | null;
+    onspeechend: ((this: SpeechRecognition, ev: Event) => any) | null;
+    onstart: ((this: SpeechRecognition, ev: Event) => any) | null;
+  }
+
+  interface SpeechRecognitionStatic {
+    new(): SpeechRecognition;
+  }
+
+  // Types for SpeechSynthesis
+  interface SpeechSynthesisUtterance extends EventTarget {
+    text: string;
+    lang: string;
+    voice: SpeechSynthesisVoice | null;
+    volume: number;
+    rate: number;
+    pitch: number;
+    onstart: ((this: SpeechSynthesisUtterance, ev: SpeechSynthesisEvent) => any) | null;
+    onend: ((this: SpeechSynthesisUtterance, ev: SpeechSynthesisEvent) => any) | null;
+    onerror: ((this: SpeechSynthesisUtterance, ev: SpeechSynthesisErrorEvent) => any) | null;
+  }
+
+  interface SpeechSynthesisUtteranceStatic {
+    new(text?: string): SpeechSynthesisUtterance;
+  }
+
+
+  // Augment Window
+  interface Window {
+    SpeechRecognition: SpeechRecognitionStatic | undefined;
+    webkitSpeechRecognition: SpeechRecognitionStatic | undefined;
+    SpeechSynthesisUtterance: SpeechSynthesisUtteranceStatic;
+    readonly speechSynthesis: SpeechSynthesis;
+  }
+}
+
 
 const App: React.FC = () => {
-  const [chatHistory, setChatHistory] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [chatHistories, setChatHistories] = useState<ChatHistoryItem[]>([]);
+  const [activeChatIdState, setActiveChatIdInternal] = useState<string | null>(null);
   const [currentMessages, setCurrentMessages] = useState<ChatMessage[]>([]);
-  const [inputText, setInputText] = useState<string>("");
-  const [inputImages, setInputImages] = useState<
-    { data: string; mimeType: string; name: string }[]
-  >([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+  const [inputValue, setInputValue] = useState<string>('');
 
-  // Initialize sidebarOpen state from localStorage or based on screen size
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState<boolean>(false);
+  const [isInitializing, setIsInitializing] = useState<boolean>(true); // Overall initialization status for loading screen
+  const [initialDataLoaded, setInitialDataLoaded] = useState<boolean>(false); // Flag for main data loading effect
 
-  const [editingState, setEditingState] = useState<{
-    messageId: string;
-    currentText: string;
-  } | null>(null);
-  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(
-    null
-  );
+  const [isSidebarOpenOnMobile, setIsSidebarOpenOnMobile] = useState<boolean>(false);
 
-  const [speechBaselineText, setSpeechBaselineText] = useState<string>("");
-  const speechBaselineTextRef = useRef<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [chatSession, setChatSession] = useState<Chat | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const [apiKeyMissing, setApiKeyMissing] = useState<boolean>(false); // Initially false, will be set by effect
+  const [aiInstance, setAiInstance] = useState<GoogleGenAI | null | undefined>(undefined); // undefined initially to signify not checked yet
+  const [currentTheme, setCurrentTheme] = useState<Theme>(loadTheme());
 
-  const [availableVoices, setAvailableVoices] = useState<
-    SpeechSynthesisVoice[]
-  >([]);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [selectedFilePreviews, setSelectedFilePreviews] = useState<FilePreview[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
 
-  const geminiService = useRef<GeminiService | null>(null);
-  const speechRecognitionRef = useRef<SpeechRecognition | null>(null);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  // Voice Input State
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const isListeningRef = useRef(isListening); // Ref to hold current isListening state for stable callbacks
+  const [currentRecognitionLang, setCurrentRecognitionLang] = useState<RecognitionLanguage>(RecognitionLanguage.EN_US);
+  const [isSpeechApiSupported, setIsSpeechApiSupported] = useState<boolean>(true);
+  const [micError, setMicError] = useState<string | null>(null);
+  const speechRecognitionInstanceRef = useRef<SpeechRecognition | null>(null);
+
+  // Text-to-Speech (TTS) State
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [isSpeechSynthesisSupported, setIsSpeechSynthesisSupported] = useState<boolean>(true);
+  const [ttsError, setTtsError] = useState<string | null>(null);
+  const speechSynthesisUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [ttsVoices, setTtsVoices] = useState<SpeechSynthesisVoice[]>([]);
+
+  // Stop Generation
+  const streamAbortControllerRef = useRef<AbortController | null>(null);
+
+  // Code Emulator Modal State
+  const [showRunCodeModal, setShowRunCodeModal] = useState<boolean>(false);
+  const [runningCodeInfo, setRunningCodeInfo] = useState<{ code: string, language: string | undefined } | null>(null);
+
+  // AI Title Generation State
+  const [generatingTitleForChatId, setGeneratingTitleForChatId] = useState<string | null>(null);
+
+  // Page Reload State
+  const [isReloadingPage, setIsReloadingPage] = useState<boolean>(false);
+
+
+  // Keep isListeningRef synced with isListening state
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
 
   useEffect(() => {
-    let apiKey: string | undefined = undefined;
-
-    // Try to get API key from Vite's import.meta.env
-    console.log("Attempting to load API key...");
-    if (
-      typeof import.meta !== "undefined" &&
-      typeof import.meta.env !== "undefined"
-    ) {
-      console.log("import.meta.env is available. Checking for VITE_API_KEY...");
-      const viteSpecificApiKey = (import.meta.env as any).VITE_API_KEY;
-      if (typeof viteSpecificApiKey === "string") {
-        console.log(
-          "Found VITE_API_KEY in import.meta.env:",
-          viteSpecificApiKey ? "Exists" : "Empty String"
-        );
-        apiKey = viteSpecificApiKey;
-      } else {
-        console.log(
-          "VITE_API_KEY not found or not a string in import.meta.env. Checking for generic API_KEY in import.meta.env..."
-        );
-        // Fallback to API_KEY from import.meta.env only if VITE_API_KEY is not defined.
-        // Note: Accessing non-VITE_ prefixed vars from import.meta.env is non-standard for Vite
-        // for user-defined .env variables unless envPrefix is customized. Use type assertion.
-        const genericMetaApiKey = (import.meta.env as any).API_KEY;
-        if (typeof genericMetaApiKey === "string") {
-          console.log(
-            "Found generic API_KEY in import.meta.env:",
-            genericMetaApiKey ? "Exists" : "Empty String"
-          );
-          apiKey = genericMetaApiKey;
-        } else {
-          console.log(
-            "Generic API_KEY not found or not a string in import.meta.env."
-          );
-        }
-      }
-    } else {
-      console.log("import.meta.env is not available.");
+    applyTheme(currentTheme);
+    if (currentTheme === Theme.SYSTEM) {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      const handleChange = () => applyTheme(Theme.SYSTEM);
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
     }
-
-    // Fallback for Create React App or Node.js-like environments (less likely for client-side)
-    if (!apiKey && typeof process !== "undefined" && process.env) {
-      console.log(
-        "API key not found yet. Checking process.env for REACT_APP_API_KEY..."
-      );
-      apiKey = process.env.REACT_APP_API_KEY;
-      if (apiKey)
-        console.log(
-          "Found REACT_APP_API_KEY in process.env:",
-          apiKey ? "Exists" : "Empty String"
-        );
-    }
-    if (!apiKey && typeof process !== "undefined" && process.env) {
-      // General fallback
-      console.log(
-        "API key not found yet. Checking process.env for generic API_KEY..."
-      );
-      apiKey = process.env.API_KEY;
-      if (apiKey)
-        console.log(
-          "Found generic API_KEY in process.env:",
-          apiKey ? "Exists" : "Empty String"
-        );
-    }
-
-    if (!apiKey) {
-      setApiKeyError(
-        "API_KEY environment variable not accessible or not set. Please configure it to use the AI features."
-      );
-      console.error("API_KEY environment variable not accessible or not set.");
-    } else {
-      try {
-        geminiService.current = new GeminiService(apiKey);
-        setApiKeyError(null);
-      } catch (error) {
-        console.error("Error initializing GeminiService:", error);
-        setApiKeyError(
-          error instanceof Error
-            ? error.message
-            : "Failed to initialize AI Service."
-        );
-      }
-    }
-  }, []);
-
-  // Effect for initializing chat state from localStorage or creating a new session
-  useEffect(() => {
-    if (typeof window === "undefined") return; // Guard against non-browser environments
-    // Removed: if (apiKeyError) return; // History loading should not depend on API key status
-
-    let loadedHistory: ChatSession[] = [];
-    let storedActiveSessionId: string | null = null;
-
-    try {
-      const storedHistoryJson = localStorage.getItem(
-        LOCAL_STORAGE_KEYS.CHAT_HISTORY
-      );
-      if (storedHistoryJson) {
-        const parsedHistory: ChatSession[] = JSON.parse(storedHistoryJson);
-        // Ensure it's an array and sort by timestamp descending to get the latest first
-        if (Array.isArray(parsedHistory)) {
-          loadedHistory = parsedHistory.sort(
-            (a, b) => b.timestamp - a.timestamp
-          );
-        }
-      }
-    } catch (error) {
-      console.error(
-        "Failed to load or parse chat history from localStorage:",
-        error
-      );
-      localStorage.removeItem(LOCAL_STORAGE_KEYS.CHAT_HISTORY); // Clear corrupted data
-    }
-
-    try {
-      const activeId = localStorage.getItem(
-        LOCAL_STORAGE_KEYS.ACTIVE_SESSION_ID
-      );
-      if (activeId) {
-        storedActiveSessionId = activeId;
-      }
-    } catch (error) {
-      console.error(
-        "Failed to load active session ID from localStorage:",
-        error
-      );
-      localStorage.removeItem(LOCAL_STORAGE_KEYS.ACTIVE_SESSION_ID); // Clear corrupted data
-    }
-
-    if (loadedHistory.length > 0) {
-      setChatHistory(loadedHistory);
-      const sessionExists = loadedHistory.some(
-        (session) => session.id === storedActiveSessionId
-      );
-      if (storedActiveSessionId && sessionExists) {
-        setActiveSessionId(storedActiveSessionId);
-      } else {
-        // Default to the most recent session (first in the sorted list)
-        setActiveSessionId(loadedHistory[0].id);
-      }
-    } else {
-      // No valid history found, or history is empty. Create a new session.
-      const newSessionId = uuidv4();
-      const newSession: ChatSession = {
-        id: newSessionId,
-        title: "New Chat",
-        messages: [],
-        timestamp: Date.now(),
-      };
-      setChatHistory([newSession]);
-      setActiveSessionId(newSessionId);
-      // No need to save to localStorage here, the other useEffects will handle it.
-    }
-  }, []); // Runs once on mount to load initial history
+  }, [currentTheme]);
 
   useEffect(() => {
-    if (activeSessionId) {
-      const activeSession = chatHistory.find(
-        (session) => session.id === activeSessionId
-      );
-      setCurrentMessages(activeSession ? activeSession.messages : []);
-    } else {
-      setCurrentMessages([]);
-    }
-    setEditingState(null);
-  }, [activeSessionId, chatHistory]);
-
-  // Effect to save sidebarOpen state to localStorage
-  useEffect(() => {
-    // Sidebar state persistence is independent of the API key status
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.setItem(
-          LOCAL_STORAGE_KEYS.SIDEBAR_OPEN_STATE,
-          JSON.stringify(sidebarOpen)
-        );
-      } catch (error) {
-        console.error("Failed to save sidebar state to localStorage:", error);
-      }
-    }
-  }, [sidebarOpen]);
-
-  // Re-evaluating the dependencies for saving effects:
-  // The primary trigger for saving chatHistory is when chatHistory itself changes.
-  // The primary trigger for saving activeSessionId is when activeSessionId itself changes.
-  // The apiKeyError state should not prevent these save operations if we want history to persist
-  // even when the API key is temporarily invalid.
-
-  // Corrected effect to save chatHistory to localStorage
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (chatHistory.length > 0) {
-        try {
-          localStorage.setItem(
-            LOCAL_STORAGE_KEYS.CHAT_HISTORY,
-            JSON.stringify(chatHistory)
-          );
-        } catch (error) {
-          console.error("Failed to save chat history to localStorage:", error);
-        }
-      } else {
-        // If chatHistory becomes empty, clear it from localStorage
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.CHAT_HISTORY);
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.ACTIVE_SESSION_ID); // Also clear active session
-      }
-    }
-  }, [chatHistory]); // Depends only on chatHistory
-
-  // Corrected effect to save activeSessionId to localStorage
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      if (activeSessionId) {
-        try {
-          localStorage.setItem(
-            LOCAL_STORAGE_KEYS.ACTIVE_SESSION_ID,
-            activeSessionId
-          );
-        } catch (error) {
-          console.error(
-            "Failed to save active session ID to localStorage:",
-            error
-          );
-        }
-      } else {
-        // If activeSessionId becomes null, remove it
-        localStorage.removeItem(LOCAL_STORAGE_KEYS.ACTIVE_SESSION_ID);
-      }
-    }
-  }, [activeSessionId]); // Depends only on activeSessionId
-
-  const handleNewChat = useCallback((): string => {
-    const newSessionId = uuidv4();
-    const newSession: ChatSession = {
-      id: newSessionId,
-      title: "New Chat",
-      messages: [],
-      timestamp: Date.now(),
-    };
-    setChatHistory((prev) =>
-      [newSession, ...prev].sort((a, b) => b.timestamp - a.timestamp)
-    );
-    setActiveSessionId(newSessionId);
-    setEditingState(null);
-    return newSessionId;
-  }, []);
-
-  const updateChatSession = useCallback(
-    (sessionId: string, newMessages: ChatMessage[], newTitle?: string) => {
-      setChatHistory((prevHistory) => {
-        const now = Date.now();
-        let updated = false;
-        const newHistory = prevHistory.map((session) => {
-          if (session.id === sessionId) {
-            updated = true;
-            return {
-              ...session,
-              messages: [...newMessages], // always new array
-              title: newTitle || session.title,
-              timestamp: now,
-            };
-          }
-          return session;
-        });
-        // If session not found (shouldn't happen), add it
-        if (!updated) {
-          newHistory.push({
-            id: sessionId,
-            messages: [...newMessages],
-            title: newTitle || "New Chat",
-            timestamp: now,
-          });
-        }
-        return newHistory.sort((a, b) => b.timestamp - a.timestamp);
+    const isSecureContext = window.isSecureContext;
+    if (!isSecureContext) {
+      console.warn("Voice input and other sensitive APIs may not work: Page is not served over a secure context (HTTPS).");
+      setError(prevError => {
+          const httpsError = "For voice features, please use a secure (HTTPS) connection.";
+          if (prevError && !prevError.includes(httpsError)) return `${prevError} ${httpsError}`;
+          if (!prevError) return httpsError;
+          return prevError;
       });
-    },
-    []
-  );
-
-  const processAndSendMessages = useCallback(
-    async (
-      sessionId: string,
-      messagesLeadingToThisTurn: ChatMessage[], // This array includes the latest user message
-      titleToUpdate?: string
-    ) => {
-      if (!geminiService.current || apiKeyError) {
-        setIsLoading(true);
-        const errorMsgContent =
-          apiKeyError ||
-          "AI Service is not available. Please check API key configuration.";
-        const errorUiMessage: ChatMessage = {
-          id: uuidv4(),
-          role: "model",
-          parts: [{ text: errorMsgContent }],
-          timestamp: Date.now(),
-          files: false,
-        };
-        const finalMessages = [...messagesLeadingToThisTurn, errorUiMessage];
-        setCurrentMessages(finalMessages);
-        updateChatSession(sessionId, finalMessages, titleToUpdate);
-        setIsLoading(false);
-        return;
-      }
-
-      setIsLoading(true);
-
-      try {
-        const stream = await geminiService.current.generateChatResponseStream(
-          sessionId,
-          messagesLeadingToThisTurn
-        );
-
-        let modelResponseText = "";
-        const modelMessageId = uuidv4();
-        const modelMessageBase: Omit<ChatMessage, "parts" | "timestamp"> = {
-          id: modelMessageId,
-          role: "model",
-          files: false,
-        };
-
-        const placeholderUiMessage: ChatMessage = {
-          ...modelMessageBase,
-          parts: [{ text: "" }],
-          timestamp: Date.now(),
-        };
-        setCurrentMessages([
-          ...messagesLeadingToThisTurn,
-          placeholderUiMessage,
-        ]);
-        updateChatSession(
-          sessionId,
-          [...messagesLeadingToThisTurn, placeholderUiMessage],
-          titleToUpdate
-        );
-
-        for await (const chunk of stream) {
-          modelResponseText += chunk.text;
-          const streamingUiMessage: ChatMessage = {
-            ...modelMessageBase,
-            parts: [{ text: modelResponseText }],
-            timestamp: Date.now(),
-          };
-
-          setCurrentMessages([
-            ...messagesLeadingToThisTurn,
-            streamingUiMessage,
-          ]);
-          updateChatSession(
-            sessionId,
-            [...messagesLeadingToThisTurn, streamingUiMessage],
-            titleToUpdate
-          );
-        }
-
-        const finalUiMessage: ChatMessage = {
-          ...modelMessageBase,
-          parts: [{ text: modelResponseText }],
-          timestamp: Date.now(),
-        };
-        setCurrentMessages([...messagesLeadingToThisTurn, finalUiMessage]);
-        updateChatSession(
-          sessionId,
-          [...messagesLeadingToThisTurn, finalUiMessage],
-          titleToUpdate
-        );
-      } catch (error) {
-        console.error("Error sending message to Gemini:", error);
-        let errorText = "An unknown error occurred.";
-        if (error instanceof Error) {
-          errorText = error.message;
-          // Check for Gemini API overload
-          if (
-            errorText.includes("503") ||
-            errorText.includes("overloaded") ||
-            errorText.includes("UNAVAILABLE")
-          ) {
-            errorText =
-              "The AI model is currently overloaded. Please try again in a few moments.";
-          }
-        }
-        const errorUiMessage: ChatMessage = {
-          id: uuidv4(),
-          role: "model",
-          parts: [{ text: `Error: ${errorText}` }],
-          timestamp: Date.now(),
-          files: false,
-        };
-        setCurrentMessages([...messagesLeadingToThisTurn, errorUiMessage]);
-        updateChatSession(
-          sessionId,
-          [...messagesLeadingToThisTurn, errorUiMessage],
-          titleToUpdate
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [apiKeyError, updateChatSession]
-  );
-
-  const handleSendMessage = useCallback(async () => {
-    if (!inputText.trim() && inputImages.length === 0) return;
-
-    let currentActiveSessionId = activeSessionId;
-    if (!currentActiveSessionId) {
-      currentActiveSessionId = handleNewChat();
     }
 
-    if (!currentActiveSessionId) {
-      alert(
-        "Failed to establish an active chat session. Please try refreshing or creating a new chat."
-      );
-      return;
-    }
-
-    const userParts: Part[] = [];
-    if (inputText.trim()) {
-      userParts.push({ text: inputText.trim() });
-    }
-    inputImages.forEach((img) => {
-      userParts.push({
-        inlineData: {
-          mimeType: img.mimeType,
-          data: img.data,
-          name: "",
-        },
-      });
-    });
-
-    const userMessage: ChatMessage = {
-      id: uuidv4(),
-      role: "user",
-      parts: userParts,
-      timestamp: Date.now(),
-      files: false,
-    };
-
-    const messagesIncludingUser = [...currentMessages, userMessage];
-
-    let sessionTitleToUpdate: string | undefined;
-    const currentSessionForTitle = chatHistory.find(
-      (s) => s.id === currentActiveSessionId
-    );
-    sessionTitleToUpdate = currentSessionForTitle?.title;
-
-    if (
-      currentSessionForTitle &&
-      currentSessionForTitle.messages.length === 0 &&
-      inputText.trim()
-    ) {
-      sessionTitleToUpdate =
-        inputText.trim().substring(0, 30) +
-        (inputText.trim().length > 30 ? "..." : "");
-    }
-
-    setCurrentMessages(messagesIncludingUser);
-    updateChatSession(
-      currentActiveSessionId,
-      messagesIncludingUser,
-      sessionTitleToUpdate
-    );
-
-    setInputText("");
-    setInputImages([]);
-
-    await processAndSendMessages(
-      currentActiveSessionId,
-      messagesIncludingUser,
-      sessionTitleToUpdate
-    );
-  }, [
-    inputText,
-    inputImages,
-    activeSessionId,
-    updateChatSession,
-    chatHistory,
-    currentMessages,
-    handleNewChat,
-    processAndSendMessages,
-  ]);
-
-  const handleStartEdit = useCallback((message: ChatMessage) => {
-    const textToEdit = message.parts.find(isTextPart)?.text || "";
-    setEditingState({ messageId: message.id, currentText: textToEdit });
-  }, []);
-
-  const handleEditInputChange = useCallback((newText: string) => {
-    setEditingState((prev) =>
-      prev ? { ...prev, currentText: newText } : null
-    );
-  }, []);
-
-  const handleSaveEdit = useCallback(async () => {
-    if (!editingState || !activeSessionId) return;
-    const { messageId, currentText } = editingState;
-
-    const activeChatSession = chatHistory.find((s) => s.id === activeSessionId);
-    if (!activeChatSession) return;
-
-    const messageIndex = activeChatSession.messages.findIndex(
-      (msg) => msg.id === messageId
-    );
-    if (messageIndex === -1) return;
-
-    const originalMessage = activeChatSession.messages[messageIndex];
-
-    const existingImageParts = originalMessage.parts.filter(
-      (part) => !isTextPart(part)
-    );
-    if (!currentText.trim() && existingImageParts.length === 0) {
-      alert("Cannot save an empty message.");
-      return;
-    }
-
-    const updatedTextPart: TextPart = { text: currentText.trim() };
-    const updatedMessage: ChatMessage = {
-      ...originalMessage,
-      parts: currentText.trim()
-        ? [updatedTextPart, ...existingImageParts]
-        : existingImageParts,
-      timestamp: Date.now(),
-    };
-
-    const messagesForResubmission = activeChatSession.messages
-      .slice(0, messageIndex)
-      .concat(updatedMessage);
-
-    let sessionTitleToUpdate = activeChatSession.title;
-    if (messageIndex === 0 && currentText.trim()) {
-      sessionTitleToUpdate =
-        currentText.trim().substring(0, 30) +
-        (currentText.trim().length > 30 ? "..." : "");
-    }
-
-    setCurrentMessages(messagesForResubmission);
-    updateChatSession(
-      activeSessionId,
-      messagesForResubmission,
-      sessionTitleToUpdate
-    );
-    setEditingState(null);
-
-    await processAndSendMessages(
-      activeSessionId,
-      messagesForResubmission,
-      sessionTitleToUpdate
-    );
-  }, [
-    editingState,
-    activeSessionId,
-    chatHistory,
-    updateChatSession,
-    processAndSendMessages,
-  ]);
-
-  const handleCancelEdit = useCallback(() => {
-    setEditingState(null);
-  }, []);
-
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      const files = Array.from(event.target.files);
-      const newImagesPromises = files.map((file) => {
-        return new Promise<{ data: string; mimeType: string; name: string }>(
-          (resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              resolve({
-                data: (reader.result as string).split(",")[1],
-                mimeType: file.type,
-                name: file.name,
-              });
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          }
-        );
-      });
-
-      Promise.all(newImagesPromises)
-        .then((newImagesData) => {
-          setInputImages((prevInputImages) => {
-            const combinedImages = [...prevInputImages, ...newImagesData];
-            if (combinedImages.length > 5) {
-              const numCanAdd = Math.max(0, 5 - prevInputImages.length);
-              const numAttempted = newImagesData.length;
-              console.warn(
-                `Maximum 5 images allowed. You had ${prevInputImages.length}, selected ${numAttempted}. Added ${numCanAdd} new image(s).`
-              );
-            }
-            return combinedImages.slice(0, 5);
-          });
-        })
-        .catch((error) => console.error("Error reading images:", error));
-
-      event.target.value = "";
-    }
-  };
-
-  const removeInputImage = (index: number) => {
-    setInputImages((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const initializeSpeechRecognition = useCallback(() => {
-    const SpeechRecognitionAPI =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) {
-      console.error("Speech Recognition API not supported in this browser.");
-      alert(
-        "Speech recognition is not available or not supported by your browser."
-      );
-      return null;
-    }
-
-    const recognition = new SpeechRecognitionAPI();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "km-KH";
-
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let combinedFinalizedFromEvent = "";
-      let latestInterimFromEvent = "";
-
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        const transcriptSegment = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          const space =
-            combinedFinalizedFromEvent.length > 0 &&
-            !combinedFinalizedFromEvent.endsWith(" ") &&
-            transcriptSegment.length > 0 &&
-            !transcriptSegment.startsWith(" ")
-              ? " "
-              : "";
-          combinedFinalizedFromEvent += space + transcriptSegment;
-        } else {
-          latestInterimFromEvent = transcriptSegment;
-        }
-      }
-
-      if (combinedFinalizedFromEvent) {
-        const spaceBeforeAppending =
-          speechBaselineTextRef.current.length > 0 &&
-          !speechBaselineTextRef.current.endsWith(" ") &&
-          combinedFinalizedFromEvent.length > 0 &&
-          !combinedFinalizedFromEvent.startsWith(" ")
-            ? " "
-            : "";
-        speechBaselineTextRef.current +=
-          spaceBeforeAppending + combinedFinalizedFromEvent;
-        setSpeechBaselineText(speechBaselineTextRef.current);
-      }
-
-      let displayText = speechBaselineTextRef.current;
-      if (latestInterimFromEvent) {
-        const spaceForInterim =
-          displayText.length > 0 &&
-          !displayText.endsWith(" ") &&
-          latestInterimFromEvent.length > 0 &&
-          !latestInterimFromEvent.startsWith(" ")
-            ? " "
-            : "";
-        displayText += spaceForInterim + latestInterimFromEvent;
-      }
-      setInputText(displayText);
-    };
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.error("Speech recognition error", event.error, event.message);
-      setIsRecording(false);
-      let userMessage = `Speech recognition error: ${event.error}.`;
-      if (
-        event.error === "not-allowed" ||
-        event.error === "service-not-allowed"
-      ) {
-        userMessage =
-          "Microphone access denied. Please allow microphone permission in your browser settings.";
-      } else if (event.error === "no-speech") {
-        userMessage = "No speech was detected. Please try again.";
-      } else if (event.error === "audio-capture") {
-        userMessage =
-          "Microphone not found or not working. Please check your microphone.";
-      }
-      alert(userMessage + (event.message ? ` (${event.message})` : ""));
-    };
-
-    recognition.onend = () => {
-      setIsRecording(false);
-      setInputText(speechBaselineTextRef.current);
-    };
-    return recognition;
-  }, []);
-
-  useEffect(() => {
-    if (!speechRecognitionRef.current) {
-      speechRecognitionRef.current = initializeSpeechRecognition();
-    }
-    return () => {
-      if (speechRecognitionRef.current) {
-        speechRecognitionRef.current.abort();
-        speechRecognitionRef.current = null;
-      }
-    };
-  }, [initializeSpeechRecognition]);
-
-  const toggleRecording = () => {
-    if (!speechRecognitionRef.current) {
-      speechRecognitionRef.current = initializeSpeechRecognition();
-      if (!speechRecognitionRef.current) {
-        return;
-      }
-    }
-
-    if (isRecording) {
-      speechRecognitionRef.current?.stop();
+      setIsSpeechApiSupported(false);
+      console.warn("Speech recognition API not found in this browser.");
     } else {
-      setSpeechBaselineText(inputText);
-      speechBaselineTextRef.current = inputText;
-      try {
-        speechRecognitionRef.current?.start();
-        setIsRecording(true);
-      } catch (e) {
-        console.error("Error starting speech recognition:", e);
-        setIsRecording(false);
-        setSpeechBaselineText("");
-        speechBaselineTextRef.current = "";
-        alert(
-          "Could not start recording. Please check microphone permissions and ensure it's not already in use."
-        );
-      }
+      setIsSpeechApiSupported(true);
     }
-  };
 
-  useEffect(() => {
-    if ("speechSynthesis" in window) {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      setIsSpeechSynthesisSupported(false);
+      console.warn("Speech synthesis not supported by this browser.");
+    } else {
+      setIsSpeechSynthesisSupported(true);
       const loadVoices = () => {
-        const voices = window.speechSynthesis.getVoices();
-        setAvailableVoices(voices);
+        const availableVoices = window.speechSynthesis!.getVoices();
+        if (availableVoices.length > 0) setTtsVoices(availableVoices);
       };
       loadVoices();
-      window.speechSynthesis.onvoiceschanged = loadVoices;
+      let voicesChangedHandler: (() => void) | null = loadVoices;
+      if (window.speechSynthesis) {
+        window.speechSynthesis.onvoiceschanged = voicesChangedHandler;
+      }
       return () => {
-        window.speechSynthesis.onvoiceschanged = null;
+        if (window.speechSynthesis && window.speechSynthesis.onvoiceschanged === voicesChangedHandler) {
+          window.speechSynthesis.onvoiceschanged = null;
+        }
       };
     }
-  }, []);
+  }, [setError]); // Added setError to dependency array
 
-  const handleSpeakMessage = useCallback(
-    (message: ChatMessage) => {
-      if (!("speechSynthesis" in window)) {
-        alert("Text-to-speech is not supported in your browser.");
-        return;
-      }
-
-      if (window.speechSynthesis.speaking && speakingMessageId === message.id) {
-        window.speechSynthesis.cancel();
-        setSpeakingMessageId(null);
-        return;
-      }
-
-      window.speechSynthesis.cancel();
-
-      const textToSpeak = message.parts
-        .filter(isTextPart)
-        .map((p) => p.text)
-        .join(" ");
-      if (!textToSpeak.trim()) return;
-
-      const utterance = new SpeechSynthesisUtterance(textToSpeak);
-      utterance.lang = "km-KH";
-
-      const khmerVoices = availableVoices.filter(
-        (voice) => voice.lang === "km-KH" || voice.lang.startsWith("km-")
-      );
-      if (khmerVoices.length > 0) {
-        utterance.voice = khmerVoices[0];
-        console.log(
-          `Using Khmer voice: ${khmerVoices[0].name} (${khmerVoices[0].lang})`
-        );
-      } else {
-        console.warn(
-          "No specific Khmer (km-KH) voice found. Using browser default for km-KH or fallback."
-        );
-      }
-
-      utterance.onstart = () => setSpeakingMessageId(message.id);
-      utterance.onend = () => setSpeakingMessageId(null);
-      utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
-        console.error("SpeechSynthesisUtterance.onerror event:", event);
-        setSpeakingMessageId(null);
-
-        let detail = "Unknown error";
-        if (event && event.error) {
-          if (typeof event.error === "string") {
-            detail = `Error code: ${event.error}`;
-          } else {
-            try {
-              detail = `Error details: ${JSON.stringify(event.error)}`;
-            } catch (e) {
-              detail = `Error: ${String(event.error)}`;
-            }
-          }
-        }
-        alert(`Could not speak the message. ${detail}`);
-      };
-
-      utteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
-    },
-    [speakingMessageId, availableVoices]
-  );
-
-  const handleStopSpeaking = useCallback(() => {
-    if ("speechSynthesis" in window && window.speechSynthesis.speaking) {
+  const setActiveChatId = useCallback((id: string | null) => {
+    setActiveChatIdInternal(id);
+    saveActiveChatId(id);
+    setEditingMessageId(null);
+    setInputValue('');
+    if (isListeningRef.current && speechRecognitionInstanceRef.current) {
+      speechRecognitionInstanceRef.current.stop();
+    }
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel();
     }
     setSpeakingMessageId(null);
-  }, []);
+    if (streamAbortControllerRef.current) {
+      streamAbortControllerRef.current.abort();
+      streamAbortControllerRef.current = null;
+      setIsSendingMessage(false);
+    }
+  }, []); // Stable: uses refs and stable setters
 
   useEffect(() => {
     return () => {
-      if ("speechSynthesis" in window && window.speechSynthesis.speaking) {
-        window.speechSynthesis.cancel();
+      if (window.speechSynthesis && window.speechSynthesis.speaking) window.speechSynthesis.cancel();
+      if (streamAbortControllerRef.current) {
+        streamAbortControllerRef.current.abort();
+        streamAbortControllerRef.current = null;
       }
     };
+  }, [activeChatIdState]); // Cleanup depends on actual activeChatIdState
+
+
+  const handleThemeChange = (newTheme: Theme) => {
+    setCurrentTheme(newTheme);
+    saveTheme(newTheme);
+    applyTheme(newTheme);
+  };
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
-const handleSelectSession = (sessionId: string) => {
-  setActiveSessionId(sessionId);
-  if (window.innerWidth < 768) {
-    setSidebarOpen(false);
-  }
-};
+  useEffect(scrollToBottom, [currentMessages]);
 
-  const deleteSession = (sessionId: string) => {
-    setChatHistory((prev) => {
-      const filteredHistory = prev.filter(
-        (session) => session.id !== sessionId
-      );
-      const sortedHistory = [...filteredHistory].sort(
-        (a, b) => b.timestamp - a.timestamp
-      );
-
-      if (activeSessionId === sessionId) {
-        if (sortedHistory.length > 0) {
-          setActiveSessionId(sortedHistory[0].id);
-        } else {
-          setActiveSessionId(null);
-        }
+  const extractUserFriendlyErrorMessage = (err: any): string => {
+      if (typeof err === 'string') return err;
+      if (err instanceof Error) {
+          if (err.message.includes('stream') && err.message.includes('abort')) return "Generation stopped by user.";
+          return err.message;
       }
-      return sortedHistory;
+      if (err && typeof err.message === 'string') return err.message;
+      if (err && typeof err.detail === 'string') return err.detail;
+      if (err && typeof err.error === 'string') return err.error;
+      if (err && typeof err.reason === 'string') return err.reason;
+      if (err && typeof err.statusText === 'string') return err.statusText;
+
+      const simpleString = String(err);
+      if (simpleString !== "[object Object]" && simpleString !== "") return simpleString.substring(0, 500);
+
+      return "An unknown error occurred.";
+  };
+
+  const initializeAndSetChatSession = useCallback(async (messagesToLoad: ChatMessage[], currentAiInstance: GoogleGenAI | null) => {
+    if (!currentAiInstance) {
+      setChatSession(null);
+      return null;
+    }
+    setError(null); setMicError(null); setTtsError(null);
+    try {
+      let geminiHistoryForCreation: { role: string; parts: object[] }[] | undefined = convertToGeminiHistory(messagesToLoad);
+
+      // Validate history for API
+      if (geminiHistoryForCreation && geminiHistoryForCreation.length > 0) {
+        if (geminiHistoryForCreation[0].role !== 'user') {
+          console.warn("[App] History for chat creation does not start with a user turn. Starting session fresh for API.");
+          geminiHistoryForCreation = undefined;
+        } else {
+          for (let i = 0; i < geminiHistoryForCreation.length - 1; i++) {
+            if (geminiHistoryForCreation[i].role === geminiHistoryForCreation[i + 1].role) {
+              console.warn("[App] History for chat creation does not have alternating roles. Starting session fresh for API.");
+              geminiHistoryForCreation = undefined;
+              break;
+            }
+          }
+        }
+      } else if (geminiHistoryForCreation && geminiHistoryForCreation.length === 0) {
+        // If conversion results in an empty list (e.g. only loading/error messages), treat as no history.
+        geminiHistoryForCreation = undefined;
+      }
+      // If messagesToLoad was empty initially, convertToGeminiHistory returns [], which becomes undefined.
+
+      const newChat = currentAiInstance.chats.create({
+        model: 'gemini-2.5-flash-preview-04-17',
+        history: geminiHistoryForCreation, // Pass validated or undefined history
+        config: {
+          systemInstruction: 'You are a helpful, friendly, and concise AI assistant. Format your responses clearly. You can use markdown for formatting if appropriate, but keep it simple. If you are given images or PDFs, analyze them and respond to the user query based on their content.',
+        },
+      });
+      setChatSession(newChat);
+      return newChat;
+    } catch (err) {
+      console.error('Failed to initialize chat session:', err);
+      const errorMessage = extractUserFriendlyErrorMessage(err);
+      setError(`Failed to initialize AI session: ${errorMessage}`);
+      setChatSession(null);
+      return null;
+    }
+  }, []); // Depends on no external state other than args, setters are stable
+
+  const handleStartEdit = (messageId: string, currentText: string) => {
+    if (isListeningRef.current && speechRecognitionInstanceRef.current) speechRecognitionInstanceRef.current.stop();
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+    }
+    setEditingMessageId(messageId);
+    setInputValue(currentText);
+    setSelectedFilePreviews([]);
+    setFileError(null);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setInputValue('');
+  };
+  
+  const handleNewChat = useCallback(async (currentAiInstanceForNewChat?: GoogleGenAI, suppressGreeting: boolean = false) => {
+    handleCancelEdit();
+    if (isListeningRef.current && speechRecognitionInstanceRef.current) {
+      speechRecognitionInstanceRef.current.stop();
+    }
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+    }
+    if (streamAbortControllerRef.current) {
+      streamAbortControllerRef.current.abort();
+      setIsSendingMessage(false);
+    }
+
+    const actualAiInstance = currentAiInstanceForNewChat || aiInstance; // aiInstance from state
+    if (!actualAiInstance || apiKeyMissing) {
+      setError(apiKeyMissing ? "Cannot start new chat: API Key is missing." : "Cannot start new chat: AI not initialized.");
+      return;
+    }
+
+    const now = new Date();
+    const newChatId = `chat-${Date.now()}`;
+    const initialMessages: ChatMessage[] = [];
+
+    if (!suppressGreeting) {
+        initialMessages.push({
+            id: `ai-greeting-${newChatId}`,
+            sender: Sender.AI,
+            timestamp: now,
+            textPart: "Hello! I'm your KH AI assistant. How can I help you today? You can also upload images or PDFs.",
+            isLoading: false,
+        });
+    }
+
+    const newHistoryItem: ChatHistoryItem = {
+      id: newChatId,
+      title: `New Chat ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      messages: initialMessages,
+      createdAt: now,
+      lastUpdatedAt: now,
+    };
+
+    setChatHistories(prevChatHistories => {
+        const updatedHistories = [newHistoryItem, ...prevChatHistories].sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+        saveChatHistories(updatedHistories);
+        return updatedHistories;
     });
 
-    if (geminiService.current) {
-      geminiService.current.deleteChatInstance(sessionId);
+    setActiveChatId(newHistoryItem.id); // Stable callback
+    setCurrentMessages(initialMessages);
+    await initializeAndSetChatSession(initialMessages, actualAiInstance);
+  }, [aiInstance, apiKeyMissing, initializeAndSetChatSession, setActiveChatId]); // Removed isListening, use isListeningRef
+
+
+  // Effect 1: Initialize aiInstance and apiKeyMissing. Runs once.
+  useEffect(() => {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      setError("API_KEY environment variable is not set. Chatbot is disabled.");
+      setApiKeyMissing(true);
+      setAiInstance(null);
+      setIsInitializing(false); // Allow history viewing etc.
+      return;
     }
-    if (speakingMessageId) handleStopSpeaking();
+
+    try {
+      const genAI = new GoogleGenAI({ apiKey });
+      setAiInstance(genAI);
+      setApiKeyMissing(false);
+      // setIsInitializing(false) will be handled by the main data loading effect
+    } catch (err) {
+      console.error("AI Initialization error:", err);
+      setError(`AI Initialization failed: ${extractUserFriendlyErrorMessage(err)}`);
+      setApiKeyMissing(true);
+      setAiInstance(null);
+      setIsInitializing(false); // Allow app to proceed or show error
+    }
+  }, []);
+
+
+  // Effect 2: Load initial data after aiInstance/apiKeyMissing are determined.
+  useEffect(() => {
+    if (initialDataLoaded) return; // Prevent re-running if already loaded
+
+    // Wait until aiInstance is determined (not undefined) or apiKeyMissing is true (meaning no key)
+    if (aiInstance === undefined && !apiKeyMissing) {
+      return; // Still waiting for Effect 1 to set aiInstance or confirm apiKeyMissing
+    }
+
+    // This local async function encapsulates the main data loading logic
+    const loadData = async () => {
+      setIsInitializing(true); // Start "initializing" state for UI
+      applyTheme(loadTheme()); // Apply theme early
+
+      let loadedHistories = loadChatHistories();
+      loadedHistories.sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+      setChatHistories(loadedHistories);
+
+      const lastActiveId = loadActiveChatId();
+      let chatToLoad: ChatHistoryItem | undefined = loadedHistories.find(h => h.id === lastActiveId);
+      if (!chatToLoad && loadedHistories.length > 0) chatToLoad = loadedHistories[0];
+
+      if (chatToLoad) {
+        setActiveChatId(chatToLoad.id); // Stable callback
+        setCurrentMessages(chatToLoad.messages); // Stable setter
+        if (aiInstance) { // aiInstance is now stable from Effect 1 or null
+          await initializeAndSetChatSession(chatToLoad.messages, aiInstance);
+        } else {
+          setChatSession(null); // No AI, no session
+        }
+      } else {
+        // No existing chats or no specific chat to load
+        if (aiInstance) {
+          // No chats, and AI is available, so create a new one.
+          // Pass aiInstance directly to avoid dependency on the useCallback'd handleNewChat for init phase
+          // This inlines part of handleNewChat's logic for the initial setup.
+            handleCancelEdit(); // from handleNewChat
+            if (isListeningRef.current && speechRecognitionInstanceRef.current) speechRecognitionInstanceRef.current.stop(); // from handleNewChat
+            if (window.speechSynthesis && window.speechSynthesis.speaking) window.speechSynthesis.cancel(); // from handleNewChat
+            setSpeakingMessageId(null); // from handleNewChat
+            if (streamAbortControllerRef.current) { streamAbortControllerRef.current.abort(); setIsSendingMessage(false); } // from handleNewChat
+
+            const now = new Date();
+            const newChatId = `chat-${Date.now()}`;
+            const initialMsgs: ChatMessage[] = [];
+             if (loadedHistories.length === 0) { // Only add greeting if truly no histories (suppressGreeting = false effectively)
+                initialMsgs.push({
+                    id: `ai-greeting-${newChatId}`, sender: Sender.AI, timestamp: now,
+                    textPart: "Hello! I'm your KH AI assistant. How can I help you today? You can also upload images or PDFs.", isLoading: false,
+                });
+            }
+            const newHistoryItem: ChatHistoryItem = {
+              id: newChatId, title: `New Chat ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+              messages: initialMsgs, createdAt: now, lastUpdatedAt: now,
+            };
+            setChatHistories(prev => [newHistoryItem, ...prev].sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime()));
+            setActiveChatId(newChatId);
+            setCurrentMessages(initialMsgs);
+            await initializeAndSetChatSession(initialMsgs, aiInstance);
+        } else {
+          // No AI instance, and no previous chats. Show empty state.
+          setActiveChatId(null);
+          setCurrentMessages([]);
+          setChatSession(null);
+        }
+      }
+      setIsInitializing(false); // Done with all initialization
+      setInitialDataLoaded(true); // Mark data as loaded
+    };
+
+    loadData();
+
+  }, [aiInstance, apiKeyMissing, initialDataLoaded, setActiveChatId, initializeAndSetChatSession]); // Dependencies that trigger this effect
+
+
+  const handleSelectChat = useCallback(async (chatIdToSelect: string) => {
+    const selectedHistory = chatHistories.find(h => h.id === chatIdToSelect);
+    if (selectedHistory && aiInstance) { // Check aiInstance
+      setActiveChatId(selectedHistory.id);
+      setCurrentMessages(selectedHistory.messages);
+      await initializeAndSetChatSession(selectedHistory.messages, aiInstance);
+    } else if (!aiInstance && selectedHistory) { // Allow selecting chat even if AI is down, just won't init session
+      setActiveChatId(selectedHistory.id);
+      setCurrentMessages(selectedHistory.messages);
+      setChatSession(null);
+    } else if (!aiInstance) {
+        setError("AI Service not available. Cannot switch chats effectively.");
+    }
+  }, [chatHistories, aiInstance, initializeAndSetChatSession, setActiveChatId]);
+
+  const handleStopGeneration = useCallback(() => {
+    if (streamAbortControllerRef.current) {
+      streamAbortControllerRef.current.abort();
+    }
+  }, []);
+
+  const generateAndSetAiTitle = async (chatId: string, textToSummarize: string, currentAiInstance: GoogleGenAI) => {
+    if (!textToSummarize.trim() || !currentAiInstance) return;
+    setGeneratingTitleForChatId(chatId);
+    try {
+      const titlePrompt = `Summarize the following text into a very short chat title (maximum 5 words, ideally 2-3 words). Respond with only the title itself, no extra text or quotes: "${textToSummarize.substring(0, 500)}"`;
+      
+      const response = await currentAiInstance.models.generateContent({
+          model: 'gemini-2.5-flash-preview-04-17',
+          contents: titlePrompt,
+      });
+  
+      const potentialTitle = response.text?.trim();
+  
+      if (potentialTitle && potentialTitle.length > 0 && potentialTitle.length < 50) {
+        setChatHistories(prevHistories => {
+          const newHistories = prevHistories.map(h => {
+            if (h.id === chatId) {
+              // Only update if the title is still the generic "New Chat..." or the client-generated one that looks similar
+              if (h.title.startsWith("New Chat")) { 
+                return { ...h, title: potentialTitle };
+              }
+            }
+            return h;
+          });
+          // Check if a change actually happened before saving and re-sorting
+          const didChange = newHistories.some((newH, index) => newH.title !== prevHistories[index]?.title && newH.id === chatId);
+          if (didChange) {
+            const sortedHistories = newHistories.sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime());
+            saveChatHistories(sortedHistories);
+            return sortedHistories;
+          }
+          return prevHistories; 
+        });
+      } else {
+          console.warn("AI title generation returned empty or unsuitable title:", potentialTitle);
+      }
+    } catch (error) {
+      console.error("Error generating AI chat title:", extractUserFriendlyErrorMessage(error));
+    } finally {
+      setGeneratingTitleForChatId(null);
+    }
   };
 
-  const deleteAllHistory = () => {
-    setChatHistory([]);
-    setActiveSessionId(null);
-    if (geminiService.current) {
-      geminiService.current.clearAllChatInstances();
+
+  const handleSendMessage = useCallback(async (files?: File[] | null) => {
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
     }
-    if (speakingMessageId) handleStopSpeaking();
-  };
+    const trimmedInput = inputValue.trim();
 
-  const toggleSidebar = () => setSidebarOpen((open) => !open);
+    const currentActiveChatId = activeChatIdState; 
 
-  if (apiKeyError && !geminiService.current) {
+    if (editingMessageId) {
+      if (!trimmedInput) {
+        setError("Cannot save an empty message. Please add some text or cancel edit.");
+        return;
+      }
+
+      setChatHistories(prevChatHistories => {
+        let activeHistoryItem = prevChatHistories.find(h => h.id === currentActiveChatId);
+        if (!activeHistoryItem) {
+            setError("Critical error: Active chat history not found during edit.");
+            return prevChatHistories;
+        }
+
+        const editedMessageIndex = activeHistoryItem.messages.findIndex(msg => msg.id === editingMessageId);
+        if (editedMessageIndex === -1) {
+            setError("Critical error: Edited message not found in history.");
+             return prevChatHistories;
+        }
+
+        const originalUserMessage = activeHistoryItem.messages[editedMessageIndex];
+        const updatedUserMessage: ChatMessage = {
+            ...originalUserMessage,
+            textPart: trimmedInput,
+            timestamp: new Date()
+        };
+
+        setCurrentMessages(prevMsgs =>
+            prevMsgs.map(msg => msg.id === editingMessageId ? updatedUserMessage : msg)
+        );
+
+        const updatedHistories = prevChatHistories.map(h => {
+            if (h.id === currentActiveChatId) {
+                return {
+                    ...h,
+                    messages: h.messages.map(msg => msg.id === editingMessageId ? updatedUserMessage : msg),
+                    lastUpdatedAt: new Date(),
+                };
+            }
+            return h;
+        });
+
+        const subsequentAiMessageIndex = editedMessageIndex + 1;
+        const aiMessageToRegenerate = (activeHistoryItem.messages.length > subsequentAiMessageIndex &&
+                                   activeHistoryItem.messages[subsequentAiMessageIndex].sender === Sender.AI)
+                                  ? activeHistoryItem.messages[subsequentAiMessageIndex]
+                                  : null;
+
+        if (aiMessageToRegenerate && aiInstance) {
+            setIsSendingMessage(true);
+            const aiMessageToRegenerateId = aiMessageToRegenerate.id;
+
+            setCurrentMessages(prev => prev.map(msg =>
+                msg.id === aiMessageToRegenerateId ? { ...msg, textPart: '', isLoading: true, error: undefined, fileParts: undefined } : msg
+            ));
+
+            const historiesWithLoadingAi = updatedHistories.map(h => {
+                if (h.id === currentActiveChatId) {
+                    return {
+                        ...h,
+                        messages: h.messages.map(msg =>
+                            msg.id === aiMessageToRegenerateId ? { ...msg, textPart: '', isLoading: true, error: undefined, fileParts: undefined, timestamp: new Date() } : msg
+                        ),
+                        lastUpdatedAt: new Date(),
+                    };
+                }
+                return h;
+            });
+
+            let accumulatedRegeneratedText = '';
+            streamAbortControllerRef.current = new AbortController();
+
+            (async () => {
+                try {
+                    // History for regen session context: messages *before* the edited one
+                    const historyContextForRegeneration = activeHistoryItem.messages.slice(0, editedMessageIndex);
+                    
+                    let geminiHistoryForRegen: { role: string; parts: object[] }[] | undefined = convertToGeminiHistory(historyContextForRegeneration);
+
+                    // Validate history for regen API call
+                    if (geminiHistoryForRegen && geminiHistoryForRegen.length > 0) {
+                        if (geminiHistoryForRegen[0].role !== 'user') {
+                          console.warn("[App] Regen history does not start with a user turn. Starting session fresh for API regen.");
+                          geminiHistoryForRegen = undefined;
+                        } else {
+                          for (let i = 0; i < geminiHistoryForRegen.length - 1; i++) {
+                            if (geminiHistoryForRegen[i].role === geminiHistoryForRegen[i + 1].role) {
+                              console.warn("[App] Regen history does not have alternating roles. Starting session fresh for API regen.");
+                              geminiHistoryForRegen = undefined;
+                              break;
+                            }
+                          }
+                        }
+                      } else if (geminiHistoryForRegen && geminiHistoryForRegen.length === 0) {
+                        geminiHistoryForRegen = undefined;
+                      }
+
+                    const regenChatSession = aiInstance.chats.create({
+                        model: 'gemini-2.5-flash-preview-04-17',
+                        history: geminiHistoryForRegen, // Pass validated or undefined history
+                        config: {
+                          systemInstruction: 'You are a helpful, friendly, and concise AI assistant. Format your responses clearly. You can use markdown for formatting if appropriate, but keep it simple. If you are given images or PDFs, analyze them and respond to the user query based on their content.',
+                        },
+                    });
+
+                    const partsForEditedUserMessage: ({ text: string } | { inlineData: { mimeType: string, data: string }})[] = [];
+                    if (updatedUserMessage.textPart && updatedUserMessage.textPart.trim() !== "") {
+                        partsForEditedUserMessage.push({ text: updatedUserMessage.textPart.trim() });
+                    }
+                    if (updatedUserMessage.fileParts) {
+                        updatedUserMessage.fileParts.forEach(fp => {
+                            const base64DataOnly = fp.data.substring(fp.data.indexOf(',') + 1);
+                            partsForEditedUserMessage.push({ inlineData: { mimeType: fp.mimeType, data: base64DataOnly } });
+                        });
+                    }
+
+                    if (partsForEditedUserMessage.length === 0) {
+                        throw new Error("Edited message has no content to send to AI for regeneration.");
+                    }
+
+                    const stream = await regenChatSession.sendMessageStream({ message: partsForEditedUserMessage });
+
+                    for await (const chunk of stream) {
+                        if (streamAbortControllerRef.current?.signal.aborted) {
+                        accumulatedRegeneratedText += " (Stopped)";
+                        break;
+                        }
+                        const chunkText = chunk.text;
+                        if (typeof chunkText === 'string') {
+                            accumulatedRegeneratedText += chunkText;
+                        } else if (chunkText !== null && chunkText !== undefined) {
+                            console.warn("Received non-string chunk text during edit regeneration:", chunkText);
+                        }
+                        setCurrentMessages(prev => prev.map(msg =>
+                        msg.id === aiMessageToRegenerateId ? { ...msg, textPart: accumulatedRegeneratedText, isLoading: true } : msg
+                        ));
+                    }
+
+                    const finalRegeneratedAiMessage: ChatMessage = {
+                        ...aiMessageToRegenerate,
+                        textPart: accumulatedRegeneratedText,
+                        timestamp: new Date(),
+                        isLoading: false,
+                        error: streamAbortControllerRef.current?.signal.aborted ? "Generation stopped by user." : undefined,
+                        fileParts: undefined,
+                    };
+
+                    setCurrentMessages(prev => prev.map(msg => msg.id === aiMessageToRegenerateId ? finalRegeneratedAiMessage : msg));
+
+                    setChatHistories(finalPrevHistories => {
+                        const regeneratedHistories = finalPrevHistories.map(h => {
+                            if (h.id === currentActiveChatId) {
+                                return {
+                                    ...h,
+                                    messages: h.messages.map(msg => {
+                                      return msg.id === aiMessageToRegenerateId ? finalRegeneratedAiMessage : (msg.id === editingMessageId ? updatedUserMessage : msg);
+                                    }),
+                                    lastUpdatedAt: new Date(),
+                                };
+                            }
+                            return h;
+                        }).sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+                        saveChatHistories(regeneratedHistories);
+                        const currentActiveChatForSession = regeneratedHistories.find(h => h.id === currentActiveChatId);
+                        if (currentActiveChatForSession) initializeAndSetChatSession(currentActiveChatForSession.messages, aiInstance); // Pass aiInstance
+                        return regeneratedHistories;
+                    });
+                } catch (err) {
+                    console.error('Error regenerating AI response:', err);
+                    const errorText = extractUserFriendlyErrorMessage(err);
+                    const errorAiMessageUpdate: ChatMessage = {
+                        ...aiMessageToRegenerate,
+                        textPart: accumulatedRegeneratedText + `Error during regeneration. ${errorText}`,
+                        isLoading: false,
+                        error: `AI Regeneration Error: ${errorText}`,
+                        timestamp: new Date(),
+                        fileParts: undefined,
+                    };
+                    setCurrentMessages(prev => prev.map(msg => msg.id === aiMessageToRegenerateId ? errorAiMessageUpdate : msg));
+
+                    setChatHistories(finalPrevHistories => {
+                        const errorHistories = finalPrevHistories.map(h => {
+                            if (h.id === currentActiveChatId) {
+                            return {
+                                ...h,
+                                messages: h.messages.map(msg => {
+                                  return msg.id === aiMessageToRegenerateId ? errorAiMessageUpdate : (msg.id === editingMessageId ? updatedUserMessage : msg);
+                                }),
+                                lastUpdatedAt: new Date(),
+                            };
+                            }
+                            return h;
+                        }).sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+                        saveChatHistories(errorHistories);
+                        return errorHistories;
+                    });
+                } finally {
+                    setIsSendingMessage(false);
+                    if (streamAbortControllerRef.current) streamAbortControllerRef.current = null;
+                }
+            })();
+            return historiesWithLoadingAi;
+        } else {
+            const sortedHistories = updatedHistories.sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+            saveChatHistories(sortedHistories);
+             if (aiInstance) { // Re-initialize chat session after edit if AI is available
+                const currentActiveChatForSession = sortedHistories.find(h => h.id === currentActiveChatId);
+                if (currentActiveChatForSession) initializeAndSetChatSession(currentActiveChatForSession.messages, aiInstance);
+            }
+            return sortedHistories;
+        }
+      });
+
+      setEditingMessageId(null);
+      setInputValue('');
+      return;
+    }
+
+    if (!trimmedInput && (!files || files.length === 0)) return;
+    if (apiKeyMissing || !currentActiveChatId || !aiInstance) return;
+    if (isSendingMessage && !streamAbortControllerRef.current) return;
+
+    let currentActiveChatSession = chatSession;
+    if (!currentActiveChatSession) {
+        const activeHistoryItemFromState = chatHistories.find(h => h.id === currentActiveChatId);
+        if (activeHistoryItemFromState && aiInstance) { // Ensure aiInstance before re-init
+            currentActiveChatSession = await initializeAndSetChatSession(activeHistoryItemFromState.messages, aiInstance);
+            if (!currentActiveChatSession) {
+                setError("Failed to re-initialize chat session.");
+                setIsSendingMessage(false); return;
+            }
+        } else if (!aiInstance) {
+             setError("AI Service not available.");
+             setIsSendingMessage(false); return;
+        } else {
+             setError("Active chat data not found.");
+             setIsSendingMessage(false); return;
+        }
+    }
+
+    setIsSendingMessage(true);
+    setError(null); setMicError(null); setTtsError(null);
+    setInputValue(''); setSelectedFilePreviews([]); setFileError(null);
+
+    const filePartsForMessage: FilePart[] = [];
+    if (files && files.length > 0) {
+      let totalSize = 0;
+      if (files.length > MAX_FILES_PER_MESSAGE) {
+        setError(`Cannot upload more than ${MAX_FILES_PER_MESSAGE} files at a time.`);
+        setIsSendingMessage(false); return;
+      }
+      for (const file of files) {
+        if (!ALLOWED_FILE_TYPES.includes(file.type)) {
+          setError(`Unsupported file type: ${file.name}. Allowed: ${ALLOWED_FILE_TYPES.join(', ')}.`);
+          setIsSendingMessage(false); return;
+        }
+        if (file.size > MAX_INDIVIDUAL_FILE_SIZE) {
+          setError(`File ${file.name} is too large. Max: ${MAX_INDIVIDUAL_FILE_SIZE / (1024*1024)}MB.`);
+          setIsSendingMessage(false); return;
+        }
+        totalSize += file.size;
+        if (totalSize > MAX_TOTAL_FILE_SIZE) {
+          setError(`Total file size exceeds ${MAX_TOTAL_FILE_SIZE / (1024*1024)}MB.`);
+          setIsSendingMessage(false); return;
+        }
+        try {
+          const base64Data = await fileToBase64(file);
+          filePartsForMessage.push({ name: file.name, mimeType: file.type, data: base64Data });
+        } catch (err) {
+          setError(`Could not process file: ${file.name}. ${extractUserFriendlyErrorMessage(err)}`);
+          setIsSendingMessage(false); return;
+        }
+      }
+    }
+
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      sender: Sender.USER,
+      timestamp: new Date(),
+      textPart: trimmedInput,
+      fileParts: filePartsForMessage.length > 0 ? filePartsForMessage : undefined,
+    };
+
+    setCurrentMessages(prevMessages => [...prevMessages, userMessage]);
+
+    // Determine if AI title generation should be attempted
+    let shouldAttemptAiTitleGeneration = false;
+    let initialUserMessageForTitle: ChatMessage | undefined = undefined;
+
+    const chatToUpdateForTitle = chatHistories.find(h => h.id === currentActiveChatId);
+    if (chatToUpdateForTitle && chatToUpdateForTitle.title.startsWith("New Chat")) {
+      const aiResponsesInChat = chatToUpdateForTitle.messages.filter(m => m.sender === Sender.AI && m.textPart && !m.isLoading);
+      if (aiResponsesInChat.length === 0) { // This will be the first AI response
+        shouldAttemptAiTitleGeneration = true;
+        // Find the actual first user message in the history if it exists, otherwise use current
+        const firstUserMsgInHistory = chatToUpdateForTitle.messages.find(m => m.sender === Sender.USER && (m.textPart?.trim() || (m.fileParts && m.fileParts.length > 0)));
+        initialUserMessageForTitle = firstUserMsgInHistory || userMessage;
+      }
+    }
+
+    const aiMessageId = `ai-${Date.now()}`;
+    const aiPlaceholderMessage: ChatMessage = {
+      id: aiMessageId,
+      sender: Sender.AI,
+      timestamp: new Date(),
+      isLoading: true,
+    };
+    setCurrentMessages(prev => [...prev, aiPlaceholderMessage]);
+
+    setChatHistories(prevHistories => {
+      const newHistories = prevHistories.map(h => {
+        if (h.id === currentActiveChatId) {
+          let newTitle = h.title;
+          // Generate client-side title only if AI title won't be attempted or if title is still default.
+          if (h.title.startsWith("New Chat") && !shouldAttemptAiTitleGeneration) {
+            newTitle = generateChatTitle(userMessage.textPart, userMessage.fileParts);
+          }
+          return { ...h, title: newTitle, messages: [...h.messages, userMessage], lastUpdatedAt: new Date() };
+        }
+        return h;
+      }).sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+      // No saveChatHistories here yet, will be saved after AI response or in finally block
+      return newHistories;
+    });
+
+    streamAbortControllerRef.current = new AbortController();
+    let accumulatedResponse = '';
+
+    try {
+      const partsForApi: ({ text: string } | { inlineData: { mimeType: string, data: string }})[] = [];
+      if (userMessage.textPart && userMessage.textPart.trim() !== "") {
+        partsForApi.push({ text: userMessage.textPart.trim() });
+      }
+      if (userMessage.fileParts) {
+        userMessage.fileParts.forEach(fp => {
+          const base64DataOnly = fp.data.substring(fp.data.indexOf(',') + 1);
+          partsForApi.push({ inlineData: { mimeType: fp.mimeType, data: base64DataOnly } });
+        });
+      }
+
+      if (partsForApi.length === 0) throw new Error("No content to send to AI.");
+
+      const stream = await currentActiveChatSession.sendMessageStream({ message: partsForApi });
+
+      for await (const chunk of stream) {
+        if (streamAbortControllerRef.current?.signal.aborted) {
+          accumulatedResponse += " (Stopped)";
+          break;
+        }
+        const chunkText = chunk.text;
+        if (typeof chunkText === 'string') {
+            accumulatedResponse += chunkText;
+        } else if (chunkText !== null && chunkText !== undefined) {
+            console.warn("Received non-string chunk text during new message stream:", chunkText);
+        }
+        setCurrentMessages(prev => prev.map(msg =>
+            msg.id === aiMessageId ? { ...msg, textPart: accumulatedResponse, isLoading: true } : msg
+        ));
+      }
+
+      const finalAiMessage: ChatMessage = {
+          id: aiMessageId,
+          textPart: accumulatedResponse,
+          sender: Sender.AI,
+          timestamp: new Date(),
+          isLoading: false,
+          error: streamAbortControllerRef.current?.signal.aborted ? "Generation stopped by user." : undefined,
+      };
+
+      setCurrentMessages(prev => prev.map(msg => msg.id === aiMessageId ? finalAiMessage : msg ));
+
+      // AI Title Generation Call
+      if (shouldAttemptAiTitleGeneration && finalAiMessage.textPart && currentActiveChatId && aiInstance) {
+        let textToSummarizeForTitle = "";
+        if (initialUserMessageForTitle?.textPart) {
+            textToSummarizeForTitle += `User: ${initialUserMessageForTitle.textPart.substring(0, 200)}\n`;
+        }
+        textToSummarizeForTitle += `AI: ${finalAiMessage.textPart.substring(0, 300)}`;
+        generateAndSetAiTitle(currentActiveChatId, textToSummarizeForTitle.trim(), aiInstance);
+      }
+      
+      setChatHistories(prevHistories => {
+        const newHistories = prevHistories.map(h => {
+          if (h.id === currentActiveChatId) {
+            const userMsgExists = h.messages.find(m => m.id === userMessage.id);
+            const messagesWithUser = userMsgExists ? h.messages : [...h.messages, userMessage];
+            const messagesWithoutOldPlaceholder = messagesWithUser.filter(m => m.id !== aiMessageId || m.sender !== Sender.AI);
+            return { ...h, messages: [...messagesWithoutOldPlaceholder, finalAiMessage].filter((item, index, self) => index === self.findIndex(t => t.id === item.id)), lastUpdatedAt: new Date() };
+          }
+          return h;
+        }).sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+        saveChatHistories(newHistories);
+        return newHistories;
+      });
+
+    } catch (err) {
+      console.error('Error sending message to AI:', err);
+      const errorMessageText = extractUserFriendlyErrorMessage(err);
+      setError(`AI Error: ${errorMessageText}`);
+      const errorAiMessage: ChatMessage = {
+        id: aiMessageId,
+        textPart: accumulatedResponse + `Error: ${errorMessageText}`,
+        sender: Sender.AI,
+        timestamp: new Date(),
+        isLoading: false,
+        error: `AI Error: ${errorMessageText}`,
+      };
+      setCurrentMessages(prev => prev.map(msg => msg.id === aiMessageId ? errorAiMessage : msg));
+      setChatHistories(prevHistories => {
+        const newHistories = prevHistories.map(h => {
+          if (h.id === currentActiveChatId) {
+             const userMsgExists = h.messages.find(m => m.id === userMessage.id);
+             const messagesWithUser = userMsgExists ? h.messages : [...h.messages, userMessage];
+             const messagesWithoutOldPlaceholder = messagesWithUser.filter(m => m.id !== aiMessageId || m.sender !== Sender.AI);
+            return { ...h, messages: [...messagesWithoutOldPlaceholder, errorAiMessage].filter((item, index, self) => index === self.findIndex(t => t.id === item.id)), lastUpdatedAt: new Date() };
+          }
+          return h;
+        }).sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+        saveChatHistories(newHistories);
+        return newHistories;
+      });
+    } finally {
+      setIsSendingMessage(false);
+      if (streamAbortControllerRef.current) streamAbortControllerRef.current = null;
+    }
+  }, [inputValue, chatSession, isSendingMessage, apiKeyMissing, aiInstance, chatHistories, initializeAndSetChatSession, editingMessageId, activeChatIdState]);
+
+
+  const handleDeleteChat = useCallback(async (chatIdToDelete: string) => {
+    if (apiKeyMissing && !aiInstance && chatHistories.length === 0) return;
+    handleCancelEdit();
+
+    setChatHistories(prevChatHistories => {
+        const remainingHistories = prevChatHistories.filter(h => h.id !== chatIdToDelete);
+        const sortedRemainingHistories = remainingHistories.sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+        saveChatHistories(sortedRemainingHistories);
+
+        if (activeChatIdState === chatIdToDelete) {
+            if (window.speechSynthesis && window.speechSynthesis.speaking) {
+                window.speechSynthesis.cancel();
+                setSpeakingMessageId(null);
+            }
+            if (streamAbortControllerRef.current) {
+                streamAbortControllerRef.current.abort();
+                setIsSendingMessage(false);
+            }
+        }
+        return sortedRemainingHistories;
+    });
+
+    if (activeChatIdState === chatIdToDelete) {
+        const currentHistories = loadChatHistories().sort((a,b) => new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime() );
+        if (currentHistories.length > 0) {
+            const nextActiveChat = currentHistories[0];
+            setActiveChatId(nextActiveChat.id);
+            setCurrentMessages(nextActiveChat.messages);
+            if (aiInstance) await initializeAndSetChatSession(nextActiveChat.messages, aiInstance); // Pass aiInstance
+        } else {
+            // No chats left, create a new one if AI is available
+            if (aiInstance) await handleNewChat(aiInstance); else setActiveChatId(null);
+        }
+    }
+  }, [activeChatIdState, apiKeyMissing, aiInstance, initializeAndSetChatSession, handleNewChat, setActiveChatId, chatHistories.length]);
+
+  const handleDeleteAllChats = useCallback(async () => {
+    if (apiKeyMissing && !aiInstance && chatHistories.length === 0) return;
+    handleCancelEdit();
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+    }
+    if (streamAbortControllerRef.current) {
+        streamAbortControllerRef.current.abort();
+        setIsSendingMessage(false);
+    }
+    setChatHistories([]);
+    saveChatHistories([]);
+    // Create a new chat if AI is available, otherwise set to null/empty state
+    if (aiInstance) await handleNewChat(aiInstance); else { setActiveChatId(null); setCurrentMessages([]); setChatSession(null); }
+  }, [apiKeyMissing, aiInstance, handleNewChat, setActiveChatId, chatHistories.length]);
+
+  // Voice Input Handlers
+  const handleChangeRecognitionLang = useCallback((lang: RecognitionLanguage) => {
+    setCurrentRecognitionLang(lang);
+    if (isListeningRef.current && speechRecognitionInstanceRef.current) speechRecognitionInstanceRef.current.stop();
+  }, []); // isListeningRef is used, no direct dep on isListening state
+
+  const handleToggleListening = useCallback(() => {
+    if (!isSpeechApiSupported) {
+      setMicError("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    if (isListeningRef.current) { // Use ref
+      if (speechRecognitionInstanceRef.current) speechRecognitionInstanceRef.current.stop();
+    } else {
+      if (window.speechSynthesis && window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+        setSpeakingMessageId(null);
+      }
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(() => {
+          setMicError(null);
+          const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+          if (!SpeechRecognitionAPI) {
+              setMicError("Speech recognition is not supported by this browser.");
+              setIsListening(false); return;
+          }
+
+          const recognition = new SpeechRecognitionAPI();
+          recognition.lang = currentRecognitionLang;
+          recognition.continuous = false; recognition.interimResults = false;
+
+          recognition.onstart = () => { setIsListening(true); setMicError(null); };
+          recognition.onresult = (event: SpeechRecognitionEvent) => {
+            setInputValue(prev => (prev ? prev.trim() + ' ' : '') + event.results[0][0].transcript.trim());
+          };
+          recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+            console.error('Speech recognition error:', event.error);
+            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') setMicError("Microphone permission denied.");
+            else if (event.error === 'no-speech') setMicError("No speech detected.");
+            else setMicError(`Voice input error: ${event.error}.`);
+            setIsListening(false);
+          };
+          recognition.onend = () => { setIsListening(false); speechRecognitionInstanceRef.current = null; };
+
+          speechRecognitionInstanceRef.current = recognition;
+          recognition.start();
+        })
+        .catch(err => {
+          setMicError("Microphone permission denied or not available. " + extractUserFriendlyErrorMessage(err));
+          setIsListening(false);
+        });
+    }
+  }, [isSpeechApiSupported, currentRecognitionLang]); // Depends on currentRecognitionLang for recognition.lang
+
+  // Text-to-Speech Handler
+  const handleToggleSpeakMessage = useCallback((messageId: string, textToSpeak: string) => {
+    if (!isSpeechSynthesisSupported || !window.speechSynthesis || !window.SpeechSynthesisUtterance) {
+      setTtsError("Speech synthesis not supported.");
+      return;
+    }
+    setTtsError(null);
+
+    if (speakingMessageId === messageId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMessageId(null);
+      if (speechSynthesisUtteranceRef.current) speechSynthesisUtteranceRef.current = null;
+    } else {
+      if (window.speechSynthesis?.speaking) window.speechSynthesis.cancel();
+
+      const utterance = new window.SpeechSynthesisUtterance(textToSpeak);
+      utterance.lang = currentRecognitionLang;
+
+      let selectedVoice: SpeechSynthesisVoice | undefined = undefined;
+      if (currentRecognitionLang === RecognitionLanguage.KM_KH) {
+        selectedVoice = ttsVoices.find(v => v.lang === RecognitionLanguage.KM_KH) || ttsVoices.find(v => v.lang.toLowerCase().startsWith('km'));
+      } else if (currentRecognitionLang === RecognitionLanguage.EN_US) {
+        selectedVoice = ttsVoices.find(v => v.lang === RecognitionLanguage.EN_US && v.default) || ttsVoices.find(v => v.lang === RecognitionLanguage.EN_US) || ttsVoices.find(v => v.lang.toLowerCase().startsWith('en') && v.default) || ttsVoices.find(v => v.lang.toLowerCase().startsWith('en'));
+      }
+      if (selectedVoice) utterance.voice = selectedVoice;
+
+      utterance.onend = () => { setSpeakingMessageId(null); speechSynthesisUtteranceRef.current = null; };
+      utterance.onerror = (event) => {
+        const synthesisEvent = event as SpeechSynthesisErrorEvent;
+        setTtsError(`Error playing speech: ${synthesisEvent.error || 'Unknown TTS error'}`);
+        setSpeakingMessageId(null); speechSynthesisUtteranceRef.current = null;
+      };
+
+      speechSynthesisUtteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+      setSpeakingMessageId(messageId);
+    }
+  }, [isSpeechSynthesisSupported, speakingMessageId, currentRecognitionLang, ttsVoices]);
+
+  // Code Emulator Handlers
+  const handleRunCode = useCallback((code: string, language: string | undefined) => {
+    setRunningCodeInfo({ code, language });
+    setShowRunCodeModal(true);
+  }, []);
+
+  const handleCloseRunCodeModal = useCallback(() => {
+    setShowRunCodeModal(false);
+    setRunningCodeInfo(null);
+  }, []);
+
+  // Page Reload Handler
+  const handleReloadPage = useCallback(() => {
+    setIsReloadingPage(true);
+    setTimeout(() => {
+      window.location.reload();
+    }, 200); // Small delay to allow loader to render
+  }, []);
+
+
+  if (isInitializing || aiInstance === undefined && !apiKeyMissing && !initialDataLoaded) { // Show loading if overall init or AI check pending
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-red-400 p-8">
-        <div className="bg-gray-800 p-6 rounded-lg shadow-xl text-center">
-          <AlertTriangle size={48} className="mx-auto mb-4 text-red-500" />
-          <h1 className="text-2xl font-bold mb-2">Configuration Error</h1>
-          <p>{apiKeyError}</p>
-          <p className="mt-4 text-sm text-gray-400">
-            Please ensure the API_KEY is correctly set up in your execution
-            environment and refresh the application.
-          </p>
+      <div className="flex items-center justify-center h-screen bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">
+        <div className="flex flex-col items-center">
+          <img src="https://github.com/pozzra/KH-AI-V2/blob/main/Images/kh_ai_logo.png?raw=true" alt="KH AI Logo" className="w-26 h-26 animate-pulse" />
+          <p className="mt-4 text-xl">Initializing Chatbot...</p>
         </div>
       </div>
     );
   }
 
+  const isChatInputDisabled = apiKeyMissing || !aiInstance || !activeChatIdState;
+  const anyError = error || micError || ttsError;
+
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-800">
+    <div className="flex h-screen max-h-screen antialiased bg-white dark:bg-slate-900 transition-colors duration-300">
       <Sidebar
-        history={chatHistory}
-        activeSessionId={activeSessionId}
-        onSelectSession={handleSelectSession}
-        onNewChat={handleNewChat}
-        onDeleteSession={deleteSession}
-        onDeleteAllHistory={deleteAllHistory}
-        isOpen={sidebarOpen}
-        toggleSidebar={toggleSidebar}
-        setSidebarOpen={setSidebarOpen}
+        histories={chatHistories}
+        activeChatId={activeChatIdState}
+        onNewChat={() => handleNewChat(aiInstance || undefined)}
+        onSelectChat={handleSelectChat}
+        onDeleteChat={handleDeleteChat}
+        onDeleteAllChats={handleDeleteAllChats}
+        apiKeyMissing={apiKeyMissing || !aiInstance}
+        isOpenOnMobile={isSidebarOpenOnMobile}
+        onCloseMobileSidebar={() => setIsSidebarOpenOnMobile(false)}
+        currentTheme={currentTheme}
+        onThemeChange={handleThemeChange}
+        generatingTitleForChatId={generatingTitleForChatId}
+        onReloadPage={handleReloadPage} 
       />
-      <div
-        className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${
-          sidebarOpen && window.innerWidth >= 768 ? "ml-64" : "ml-0"
-        }`}
-      >
-        {activeSessionId &&
-        chatHistory.find((s) => s.id === activeSessionId) ? (
-          <ChatInterface
-            messages={currentMessages}
-            inputText={inputText}
-            setInputText={setInputText}
-            inputImages={inputImages}
-            removeInputImage={removeInputImage}
-            onSendMessage={handleSendMessage}
-            onImageUpload={handleImageUpload}
-            isLoading={isLoading}
-            isRecording={isRecording}
-            toggleRecording={toggleRecording}
-            toggleSidebar={toggleSidebar}
-            sidebarOpen={sidebarOpen}
-            editingState={editingState}
-            onStartEdit={handleStartEdit}
-            onEditInputChange={handleEditInputChange}
-            onSaveEdit={handleSaveEdit}
-            onCancelEdit={handleCancelEdit}
-            speakingMessageId={speakingMessageId}
-            onSpeakMessage={handleSpeakMessage}
-            onStopSpeaking={handleStopSpeaking}
-          />
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-4">
-            {chatHistory.length === 0 && !apiKeyError ? (
-              <Loader2 className="animate-spin text-indigo-400" size={48} />
-            ) : (
-              <>
-                <Info size={48} className="mb-4" />
-                <p className="text-xl">Select a chat or start a new one.</p>
-                {!apiKeyError && (
-                  <button
-                    onClick={handleNewChat}
-                    className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow transition-colors"
-                  >
-                    Start New Chat
-                  </button>
-                )}
-              </>
-            )}
+      <div className="flex flex-col flex-grow min-w-0">
+        <header className="bg-slate-100 dark:bg-slate-800 p-4 shadow-md flex items-center gap-3 border-b border-slate-300 dark:border-slate-700">
+          <button
+            onClick={() => setIsSidebarOpenOnMobile(true)}
+            className="md:hidden p-2 text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-slate-100"
+            aria-label="Open chat history"
+          >
+            <MenuIcon className="w-6 h-6" />
+          </button>
+          <img src="https://github.com/pozzra/KH-AI-V2/blob/main/Images/kh_ai_logo.png?raw=true" alt="KH AI Logo" className="w-8 h-8 hidden sm:block" />
+          <h1 className="text-lg sm:text-xl font-semibold text-slate-800 dark:text-slate-100 truncate">
+            KH AI
+          </h1>
+          <a
+            href="https://pozzra.github.io/about-me/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto text-sm font-medium text-sky-600 hover:text-sky-500 dark:text-sky-400 dark:hover:text-sky-300 transition-colors"
+          >
+            Contact Developer
+          </a>
+        </header>
+
+        {anyError && (
+          <div className="bg-red-500 text-white p-3 text-center text-sm">
+            {anyError}
+            <button
+              onClick={() => {
+                setError(null); setMicError(null); setTtsError(null);
+                if (editingMessageId && error?.startsWith("Cannot save an empty message")) handleCancelEdit();
+              }}
+              className="ml-2 py-0.5 px-1.5 text-xs bg-red-700 hover:bg-red-800 rounded">Dismiss</button>
           </div>
         )}
+        {apiKeyMissing && !anyError && (
+          <div className="bg-red-600 dark:bg-red-700 text-white p-4 text-center font-semibold">
+            API_KEY environment variable is not set. Chatbot is disabled. Please set it up to use the application.
+          </div>
+        )}
+
+        <main className="flex-grow overflow-y-auto p-4 space-y-4 bg-white dark:bg-slate-900">
+          {currentMessages.map((msg) => (
+            <ChatMessageItem
+              key={msg.id}
+              message={msg}
+              onStartEdit={handleStartEdit}
+              isBeingEdited={editingMessageId === msg.id}
+              onToggleSpeak={handleToggleSpeakMessage}
+              isCurrentlySpeaking={speakingMessageId === msg.id}
+              isSpeechSynthesisSupported={isSpeechSynthesisSupported}
+              currentAppTheme={currentTheme}
+              onRunCode={handleRunCode}
+            />
+          ))}
+          <div ref={messagesEndRef} />
+           {currentMessages.length === 0 && !isChatInputDisabled && !isSendingMessage && activeChatIdState && (
+            <div className="text-center text-slate-500 dark:text-slate-400 mt-8">
+              <p>No messages in this chat yet.</p>
+              <p>Type something, attach files, or use voice input to get started!</p>
+            </div>
+          )}
+           {currentMessages.length === 0 && !activeChatIdState && !apiKeyMissing && !isInitializing && ( // Check !isInitializing
+             <div className="text-center text-slate-500 dark:text-slate-400 mt-8">
+                <p>No active chat. Create a new chat or select one from the history.</p>
+             </div>
+           )}
+        </main>
+
+        <ChatInput
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+          onSendMessage={handleSendMessage}
+          isLoading={isSendingMessage}
+          isChatDisabled={isChatInputDisabled}
+          isEditing={!!editingMessageId}
+          onCancelEdit={handleCancelEdit}
+          selectedFilePreviews={selectedFilePreviews}
+          setSelectedFilePreviews={setSelectedFilePreviews}
+          fileError={fileError}
+          setFileError={setFileError}
+          // Voice Input Props
+          isListening={isListening}
+          onToggleListening={handleToggleListening}
+          currentRecognitionLang={currentRecognitionLang}
+          onChangeRecognitionLang={handleChangeRecognitionLang}
+          isSpeechApiSupported={isSpeechApiSupported}
+          // Stop Generation Prop
+          onStopGeneration={handleStopGeneration}
+        />
       </div>
+      {showRunCodeModal && runningCodeInfo && (
+        <RunCodeModal
+          isOpen={showRunCodeModal}
+          onClose={handleCloseRunCodeModal}
+          code={runningCodeInfo.code}
+          language={runningCodeInfo.language}
+        />
+      )}
+      {isReloadingPage && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/70 dark:bg-black/80 flex flex-col items-center justify-center transition-opacity duration-300 ease-in-out" aria-live="assertive" role="alert">
+          <img src="https://github.com/pozzra/KH-AI-V2/blob/main/Images/kh_ai_logo.png?raw=true" alt="Reloading application" className="w-20 h-20 animate-spin" />
+          <p className="mt-4 text-xl text-white font-semibold">Reloading...</p>
+        </div>
+      )}
     </div>
   );
 };
