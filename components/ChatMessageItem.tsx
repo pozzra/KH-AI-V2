@@ -282,7 +282,7 @@ const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
     <div className={`group/outer flex items-start gap-3 my-4 ${isUser ? 'justify-end' : ''} ${isBeingEdited ? (isUser ? 'bg-sky-100 dark:bg-sky-900/50' : 'bg-slate-100 dark:bg-slate-800/50') : ''} rounded-lg p-1 -m-1`}>
       {!isUser && (
         <div className="flex-shrink-0 w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center">
-          <img src="https://github.com/pozzra/KH-AI-V2/blob/main/Images/kh_ai_logo.png?raw=true" alt="KH AI Logo" className="w-auto h-8 rounded-full" />
+          <img src="https://raw.githubusercontent.com/pozzra/KH-AI-V2/refs/heads/main/Images/kh_ai_logo.png?token=GHSAT0AAAAAADFIPF7APY56HNMGCRQRLVBC2CRGA5Qhttps://github.com/pozzra/KH-AI-V2/blob/main/Images/kh_ai_logo.png?raw=true" alt="KH AI Logo" className="w-auto h-8 rounded-full" />
         </div>
       )}
 
