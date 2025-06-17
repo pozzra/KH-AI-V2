@@ -1172,7 +1172,7 @@ const App: React.FC = () => {
     return (
       <div className="flex items-center justify-center h-screen bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">
         <div className="flex flex-col items-center">
-          <img src="https://raw.githubusercontent.com/pozzra/KH-AI-V2/refs/heads/main/Images/kh_ai_logo.png?token=GHSAT0AAAAAADFIPF7APY56HNMGCRQRLVBC2CRGA5Q" alt="KH AI Logo" className="w-26 h-26 animate-pulse" />
+          <img src="https://github.com/pozzra/KH-AI-V2/blob/main/Images/kh_ai_logo.png?raw=true" alt="KH AI Logo" className="w-26 h-26 animate-pulse" />
           <p className="mt-4 text-xl">Initializing Chatbot...</p>
         </div>
       </div>
@@ -1208,7 +1208,7 @@ const App: React.FC = () => {
           >
             <MenuIcon className="w-6 h-6" />
           </button>
-          <img src="https://raw.githubusercontent.com/pozzra/KH-AI-V2/refs/heads/main/Images/kh_ai_logo.png?token=GHSAT0AAAAAADFIPF7APY56HNMGCRQRLVBC2CRGA5Q" alt="KH AI Logo" className="w-8 h-8 hidden sm:block" />
+          <img src="https://github.com/pozzra/KH-AI-V2/blob/main/Images/kh_ai_logo.png?raw=true" alt="KH AI Logo" className="w-8 h-8 hidden sm:block" />
           <h1 className="text-lg sm:text-xl font-semibold text-slate-800 dark:text-slate-100 truncate">
             KH AI
           </h1>
